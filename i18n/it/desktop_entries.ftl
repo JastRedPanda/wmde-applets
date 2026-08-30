@@ -46,3 +46,5 @@ cosmic-applet-status-area-keywords = WMDE;Applet;Applicazione;Indicatore;Notific
 cosmic-applet-tiling-keywords = WMDE;Applet;Affiancamento;Suggerimento;Area di lavoro;
 cosmic-applet-time-keywords = WMDE;Applet;Data;Ora;Calendario;
 cosmic-applet-workspaces-keywords = WMDE;Applet;Area di lavoro;
+cosmic-panel-app-button-keywords = WMDE;Applet;App;Libreria;Tray;
+cosmic-panel-launcher-button-keywords = WMDE;Applet;Launcher;Runner;
