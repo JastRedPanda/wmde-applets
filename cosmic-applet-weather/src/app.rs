@@ -436,7 +436,10 @@ impl cosmic::Application for WeatherApplet {
                 }
             }
             Message::OpenSettings => {
-                let exec = String::from("wmde-weather-settings");
+                // The settings page of this applet in Settings, built from
+                // `fun.wmde.AppletWeather.ron`. The city search, which no schema can
+                // describe, is reached from there by its `External` row.
+                let exec = format!("wmde-settings applet {}", Self::APP_ID);
                 if let Some(tx) = self.token_tx.as_ref() {
                     let _ = tx.send(TokenRequest {
                         app_id: Self::APP_ID.to_string(),
@@ -454,7 +457,8 @@ impl cosmic::Application for WeatherApplet {
                     self.token_tx = None;
                 }
                 TokenUpdate::ActivationToken { token, .. } => {
-                    let mut cmd = std::process::Command::new("wmde-weather-settings");
+                    let mut cmd = std::process::Command::new("wmde-settings");
+                    cmd.args(["applet", Self::APP_ID]);
                     if let Some(token) = token {
                         cmd.env("XDG_ACTIVATION_TOKEN", &token);
                         cmd.env("DESKTOP_STARTUP_ID", &token);
