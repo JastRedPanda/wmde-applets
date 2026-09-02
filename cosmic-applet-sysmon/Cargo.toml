@@ -4,10 +4,12 @@ version = "1.0.15"
 edition = "2024"
 license = "GPL-3.0-only"
 
+# Sampling and the graph widget come from wmde-sysmon, shared with the task manager.
 # No sampling crate on purpose: `sysinfo` and `procfs` walk the whole of
 # /proc and allocate per call, which is the opposite of what an applet that
 # ticks once a second for the whole session needs. The collector is std.
 [dependencies]
+wmde-sysmon.workspace = true
 cosmic-applets-config.workspace = true
 cosmic-config.workspace = true
 i18n-embed-fl.workspace = true

@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 mod app;
-mod graph;
 mod localize;
-mod probe;
 
 use localize::localize;
 

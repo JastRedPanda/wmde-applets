@@ -1189,6 +1189,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+ "wmde-sysmon",
 ]
 
 [[package]]
@@ -8152,6 +8153,14 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "xdgen",
+]
+
+[[package]]
+name = "wmde-sysmon"
+version = "1.0.15"
+dependencies = [
+ "libcosmic",
+ "tracing",
 ]
 
 [[package]]

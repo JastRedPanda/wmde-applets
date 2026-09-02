@@ -21,6 +21,7 @@ members = [
     "cosmic-applet-input-sources",
     "cosmic-applet-a11y",
     "cosmic-applets-config",
+    "wmde-sysmon",
 ]
 
 resolver = "3"
@@ -29,6 +30,7 @@ resolver = "3"
 anyhow = "1.0.102"
 cctk = { git = "https://github.com/pop-os/cosmic-protocols", package = "cosmic-client-toolkit", rev = "a7d2d7a" }
 cosmic-applets-config = { path = "cosmic-applets-config" }
+wmde-sysmon = { path = "wmde-sysmon" }
 cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", default-features = false, features = [
     "client",
 ], rev = "a7d2d7a" }

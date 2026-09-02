@@ -1,0 +1,13 @@
+[package]
+name = "wmde-sysmon"
+version = "1.0.15"
+edition = "2024"
+license = "GPL-3.0-only"
+
+# Load sampling and the graph widget, shared by the panel applet and the task manager.
+# Kept free of applet scaffolding on purpose: no cosmic-applets-config, no cosmic-config, no
+# localization. Everything that knows about panel thickness, popups or applet settings lives
+# in the consumer, so a plain window can take this crate without dragging the panel in.
+[dependencies]
+libcosmic.workspace = true
+tracing.workspace = true

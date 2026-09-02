@@ -12,8 +12,8 @@
 //! wakeups than the work itself.
 
 use crate::fl;
-use crate::graph::{self, Colors, Kind, MAX_BANDS, Metrics, Ring, Strip};
-use crate::probe::{Probe, Sample, Sources};
+use wmde_sysmon::graph::{self, Colors, Kind, MAX_BANDS, Metrics, Ring, Strip};
+use wmde_sysmon::probe::{Probe, Sample, Sources};
 use cosmic::{
     Element, Task, app,
     cosmic_theme::Spacing,
