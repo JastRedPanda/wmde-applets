@@ -305,6 +305,26 @@ pub struct Metrics {
     pub gap: f32,
 }
 
+/// How a graph is drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Style {
+    /// Bands stacked from the bottom on a filled plate, no grid. What fits in the few
+    /// pixels a panel applet has, and what says which kind of load it is.
+    Bands,
+    /// The total as one curve with its own fill, over a grid of square cells, on no plate
+    /// of its own. What a window has room for.
+    ///
+    /// `cell` is the side of a grid square in pixels. There is no theme step for it: the
+    /// grid is a property of the graph, not of the layout around it.
+    Curve { cell: f32 },
+}
+
+impl Default for Style {
+    fn default() -> Self {
+        Self::Bands
+    }
+}
+
 /// The strip: every enabled graph, drawn into one geometry.
 pub struct Strip<'a> {
     kinds: &'a [Kind],
@@ -312,6 +332,7 @@ pub struct Strip<'a> {
     colors: &'a Colors,
     cache: &'a canvas::Cache,
     metrics: Metrics,
+    style: Style,
 }
 
 impl<'a> Strip<'a> {
@@ -328,7 +349,15 @@ impl<'a> Strip<'a> {
             colors,
             cache,
             metrics,
+            style: Style::Bands,
         }
+    }
+
+    /// Draw as a curve over a grid instead of stacked bands.
+    #[must_use]
+    pub fn style(mut self, style: Style) -> Self {
+        self.style = style;
+        self
     }
 
     fn size(&self) -> Size {
@@ -371,12 +400,26 @@ impl<'a> Strip<'a> {
         kind: Kind,
         at: Rectangle,
     ) {
-        frame.fill_rectangle(at.position(), at.size(), self.colors.background(theme));
+        let curve_cell = match self.style {
+            Style::Bands => {
+                frame.fill_rectangle(at.position(), at.size(), self.colors.background(theme));
+                None
+            }
+            // No plate: the window's own colour is the ground, and what would have been the
+            // plate becomes the grid. That is the same theme value in both styles, and it is
+            // the arrangement the reference has.
+            Style::Curve { cell } => {
+                self.draw_grid(frame, theme, at, cell);
+                Some(cell)
+            }
+        };
 
         let ring = &self.rings[kind.index()];
         let bands = kind.bands();
         let columns = ring.len().min(at.width as usize);
-        if columns > 0 {
+        if let (Some(_), true) = (curve_cell, columns > 0) {
+            self.draw_curve(frame, theme, kind, at, columns);
+        } else if columns > 0 {
             let scale = normalizer(kind, ring, columns);
             // Newest sample at the right edge, like every strip chart.
             let left = at.x + at.width - columns as f32;
@@ -429,6 +472,88 @@ impl<'a> Strip<'a> {
             canvas::Stroke::default()
                 .with_color(self.colors.border(theme))
                 .with_width(1.0),
+        );
+    }
+
+    /// Square cells of a fixed side, laid from the right edge and from the bottom, so that
+    /// the newest sample and the zero line both sit on a line rather than between two.
+    fn draw_grid(&self, frame: &mut canvas::Frame, theme: &cosmic::Theme, at: Rectangle, cell: f32) {
+        if cell < 1.0 {
+            return;
+        }
+        let color = self.colors.background(theme);
+        let stroke = canvas::Stroke::default().with_color(color).with_width(1.0);
+
+        let mut x = at.x + at.width - cell;
+        while x > at.x {
+            // Half-pixel inset so a 1px stroke lands on the pixel and not across two.
+            let line = canvas::Path::line(
+                Point::new(x.round() + 0.5, at.y),
+                Point::new(x.round() + 0.5, at.y + at.height),
+            );
+            frame.stroke(&line, stroke.clone());
+            x -= cell;
+        }
+
+        let mut y = at.y + at.height - cell;
+        while y > at.y {
+            let line = canvas::Path::line(
+                Point::new(at.x, y.round() + 0.5),
+                Point::new(at.x + at.width, y.round() + 0.5),
+            );
+            frame.stroke(&line, stroke.clone());
+            y -= cell;
+        }
+    }
+
+    /// The total of every band as one curve, filled underneath and stroked along the top.
+    ///
+    /// The bands are summed rather than drawn apart: at window size the question is how
+    /// busy the machine is, and the breakdown is what the panel applet is for.
+    fn draw_curve(
+        &self,
+        frame: &mut canvas::Frame,
+        theme: &cosmic::Theme,
+        kind: Kind,
+        at: Rectangle,
+        columns: usize,
+    ) {
+        let ring = &self.rings[kind.index()];
+        let bands = kind.bands();
+        let scale = normalizer(kind, ring, columns);
+        let left = at.x + at.width - columns as f32;
+        let bottom = at.y + at.height;
+        let column = |i: usize| ring.column(ring.len() - columns + i);
+        let top_at = |i: usize| bottom - stack_height(column(i), bands.len(), scale, at.height);
+
+        let mut color = self.colors.band(bands[0], theme);
+        let outline = canvas::Path::new(|builder| {
+            builder.move_to(Point::new(left, top_at(0)));
+            for i in 1..columns {
+                builder.line_to(Point::new(left + i as f32, top_at(i)));
+            }
+        });
+
+        let area = canvas::Path::new(|builder| {
+            builder.move_to(Point::new(left, bottom));
+            for i in 0..columns {
+                builder.line_to(Point::new(left + i as f32, top_at(i)));
+            }
+            builder.line_to(Point::new(left + (columns - 1) as f32, bottom));
+            builder.close();
+        });
+
+        let mut fill = color;
+        // The same hue muted down to the ground, which is what the reference does with a
+        // separate pair of colours per device. Derived rather than written out, so a palette
+        // change carries it.
+        fill.a *= 0.25;
+        frame.fill(&area, fill);
+
+        color.a = 1.0;
+        frame.stroke(
+            &outline,
+            canvas::Stroke::default().with_color(color).with_width(1.0),
         );
     }
 }

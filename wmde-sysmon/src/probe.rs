@@ -46,6 +46,11 @@ const SKIP_DISK_PREFIXES: [&str; 6] = ["loop", "ram", "zram", "dm-", "md", "nbd"
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Sources {
     pub cpu: bool,
+    /// Also break the load down per logical processor, into [`Probe::cpu_cores`].
+    ///
+    /// Off by default and worth keeping off: `/proc/stat` is read [`CPU_LINE_LIMIT`] bytes
+    /// deep without it, and the kernel does not format the per-core lines that would follow.
+    pub cpu_cores: bool,
     pub memory: bool,
     pub network: bool,
     pub swap: bool,
@@ -100,6 +105,10 @@ pub struct Probe {
     /// is exactly the filter `/proc/diskstats` needs.
     disks: Vec<Box<str>>,
     disks_stamp: Option<Instant>,
+    /// Per-core shares of the last tick, in `/proc/stat` order. Grown once and reused, so
+    /// the per-core walk allocates nothing after the first tick.
+    cpu_cores: Vec<[f32; 4]>,
+    cpu_cores_prev: Vec<Cpu>,
 }
 
 impl Default for Probe {
@@ -123,7 +132,17 @@ impl Probe {
             stamp: None,
             disks: Vec::new(),
             disks_stamp: None,
+            cpu_cores: Vec::new(),
+            cpu_cores_prev: Vec::new(),
         }
+    }
+
+    /// Load per logical processor from the last tick, in the order `/proc/stat` lists them.
+    ///
+    /// Empty unless [`Sources::cpu_cores`] was asked for. Handed out as a slice rather than
+    /// through [`Sample`], which is `Copy` and would have to allocate.
+    pub fn cpu_cores(&self) -> &[[f32; 4]] {
+        &self.cpu_cores
     }
 
     /// Reads every enabled source once. The first call has no previous
@@ -140,7 +159,7 @@ impl Probe {
         let mut out = Sample::default();
 
         if want.cpu {
-            self.sample_cpu(&mut out);
+            self.sample_cpu(&mut out, want);
         }
         if want.memory || want.swap {
             self.sample_meminfo(&mut out, want);
@@ -158,13 +177,24 @@ impl Probe {
         out
     }
 
-    fn sample_cpu(&mut self, out: &mut Sample) {
+    fn sample_cpu(&mut self, out: &mut Sample, want: Sources) {
         let Some(file) = open(&mut self.stat, "/proc/stat") else {
             return;
         };
-        let Ok(n) = read_head(file, &mut self.buf, CPU_LINE_LIMIT) else {
+        let read = if want.cpu_cores {
+            read_all(file, &mut self.buf)
+        } else {
+            read_head(file, &mut self.buf, CPU_LINE_LIMIT)
+        };
+        let Ok(n) = read else {
             return;
         };
+        if want.cpu_cores {
+            self.sample_cpu_cores(n);
+        } else {
+            self.cpu_cores.clear();
+            self.cpu_cores_prev.clear();
+        }
         let Some(line) = first_line(&self.buf[..n]) else {
             return;
         };
@@ -204,6 +234,59 @@ impl Probe {
                 ];
             }
         }
+    }
+
+    /// The `cpuN` lines, in the order they appear. A core that disappears - hot unplug, or
+    /// a machine that reports fewer than last time - drops out of both vectors together, so
+    /// index N always means the same core in `cpu_cores` and in `cpu_cores_prev`.
+    fn sample_cpu_cores(&mut self, n: usize) {
+        let mut index = 0usize;
+        for line in self.buf[..n].split(|b| *b == b'\n') {
+            if !line.starts_with(b"cpu") || line.starts_with(b"cpu ") {
+                continue;
+            }
+            let mut f = fields(line);
+            // `cpu0`, `cpu1`, ... - the name itself carries no number we need, only its
+            // position matters, and that is what `index` is.
+            let _ = f.next();
+            let mut v = [0u64; 10];
+            let mut count = 0;
+            for (slot, field) in v.iter_mut().zip(f) {
+                *slot = atou64(field);
+                count += 1;
+            }
+            if count < 5 {
+                continue;
+            }
+            let cur = Cpu {
+                user: v[0],
+                nice: v[1],
+                system: v[2] + v[5] + v[6] + v[7],
+                iowait: v[4],
+                total: v[0] + v[1] + v[2] + v[3] + v[4] + v[5] + v[6] + v[7],
+            };
+            if self.cpu_cores.len() <= index {
+                self.cpu_cores.push([0.0; 4]);
+                self.cpu_cores_prev.push(cur);
+            } else {
+                let prev = std::mem::replace(&mut self.cpu_cores_prev[index], cur);
+                let total = cur.total.saturating_sub(prev.total);
+                self.cpu_cores[index] = if total > 0 {
+                    let scale = 1.0 / total as f32;
+                    [
+                        cur.user.saturating_sub(prev.user) as f32 * scale,
+                        cur.nice.saturating_sub(prev.nice) as f32 * scale,
+                        cur.system.saturating_sub(prev.system) as f32 * scale,
+                        cur.iowait.saturating_sub(prev.iowait) as f32 * scale,
+                    ]
+                } else {
+                    [0.0; 4]
+                };
+            }
+            index += 1;
+        }
+        self.cpu_cores.truncate(index);
+        self.cpu_cores_prev.truncate(index);
     }
 
     fn sample_meminfo(&mut self, out: &mut Sample, want: Sources) {
@@ -506,6 +589,7 @@ mod tests {
         let mut probe = Probe::new();
         let want = Sources {
             cpu: true,
+            cpu_cores: true,
             memory: true,
             network: true,
             swap: true,
@@ -529,5 +613,26 @@ mod tests {
         );
         assert!(second.net.iter().all(|v| v.is_finite() && *v >= 0.0));
         assert!(second.disk.iter().all(|v| v.is_finite() && *v >= 0.0));
+
+        // One entry per logical processor, and each within the same bounds as the aggregate.
+        let cores = probe.cpu_cores();
+        assert!(!cores.is_empty(), "a running machine has at least one core");
+        for core in cores {
+            let busy: f32 = core.iter().sum();
+            assert!(
+                (0.0..=1.01).contains(&busy),
+                "per-core fractions out of range: {busy}"
+            );
+        }
+    }
+
+    #[test]
+    fn per_core_costs_nothing_when_it_is_not_asked_for() {
+        let mut probe = Probe::new();
+        let _ = probe.sample(Sources {
+            cpu: true,
+            ..Sources::default()
+        });
+        assert!(probe.cpu_cores().is_empty());
     }
 }

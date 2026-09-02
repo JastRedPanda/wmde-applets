@@ -77,6 +77,9 @@ impl SysmonApplet {
     fn sources(&self) -> Sources {
         Sources {
             cpu: self.config.cpu,
+            // A strip 20 pixels tall has no room for one graph per core, and the whole file
+            // would have to be read to fill them.
+            cpu_cores: false,
             memory: self.config.memory,
             network: self.config.network,
             swap: self.config.swap,
