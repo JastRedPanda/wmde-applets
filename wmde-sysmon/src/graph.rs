@@ -221,6 +221,15 @@ impl Ring {
         self.len
     }
 
+    /// How many samples the ring holds when it is full.
+    ///
+    /// In the bands style capacity equals the graph's width in pixels, so a column is a
+    /// pixel. In the curve style it is a span of time - sixty samples for the sixty seconds
+    /// the reference shows - and the curve is stretched across whatever width it is given.
+    pub fn capacity(&self) -> usize {
+        self.cap
+    }
+
     /// Column `i` counted from the oldest sample in view.
     fn column(&self, i: usize) -> &[f32] {
         let at = ((self.head + self.cap - self.len + i) % self.cap) * self.bands;
@@ -521,25 +530,31 @@ impl<'a> Strip<'a> {
         let ring = &self.rings[kind.index()];
         let bands = kind.bands();
         let scale = normalizer(kind, ring, columns);
-        let left = at.x + at.width - columns as f32;
         let bottom = at.y + at.height;
         let column = |i: usize| ring.column(ring.len() - columns + i);
         let top_at = |i: usize| bottom - stack_height(column(i), bands.len(), scale, at.height);
 
+        // A sample is a span of time, not a pixel: the whole capacity covers the whole width,
+        // so a graph that has only just started fills in from the right rather than being
+        // squeezed into sixty pixels of it.
+        let step = at.width / ring.capacity().max(1) as f32;
+        let newest = at.x + at.width;
+        let x_at = |i: usize| newest - (columns - 1 - i) as f32 * step;
+
         let mut color = self.colors.band(bands[0], theme);
         let outline = canvas::Path::new(|builder| {
-            builder.move_to(Point::new(left, top_at(0)));
+            builder.move_to(Point::new(x_at(0), top_at(0)));
             for i in 1..columns {
-                builder.line_to(Point::new(left + i as f32, top_at(i)));
+                builder.line_to(Point::new(x_at(i), top_at(i)));
             }
         });
 
         let area = canvas::Path::new(|builder| {
-            builder.move_to(Point::new(left, bottom));
+            builder.move_to(Point::new(x_at(0), bottom));
             for i in 0..columns {
-                builder.line_to(Point::new(left + i as f32, top_at(i)));
+                builder.line_to(Point::new(x_at(i), top_at(i)));
             }
-            builder.line_to(Point::new(left + (columns - 1) as f32, bottom));
+            builder.line_to(Point::new(newest, bottom));
             builder.close();
         });
 
