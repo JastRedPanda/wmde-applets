@@ -506,7 +506,11 @@ impl<'a> Strip<'a> {
         frame.stroke(
             &border,
             canvas::Stroke::default()
-                .with_color(if curve { ink } else { self.colors.border(theme) })
+                .with_color(if curve {
+                    ink
+                } else {
+                    self.colors.border(theme)
+                })
                 .with_width(1.0),
         );
     }
@@ -517,7 +521,14 @@ impl<'a> Strip<'a> {
     /// cell always means the same thing - a span of time across, a share of the scale up -
     /// and every cell is whole. A fixed cell side in pixels cannot do that: the count then
     /// changes with the size, and the remainder lands against one edge as a stub.
-    fn draw_grid(&self, frame: &mut canvas::Frame, at: Rectangle, ink: Color, cols: u16, rows: u16) {
+    fn draw_grid(
+        &self,
+        frame: &mut canvas::Frame,
+        at: Rectangle,
+        ink: Color,
+        cols: u16,
+        rows: u16,
+    ) {
         // The same hue as the curve, far enough down to stay behind it. Derived rather than
         // written out, so a change of palette carries the grid with it.
         let mut color = ink;
@@ -738,8 +749,14 @@ mod tests {
         let newest = left + width;
         // Ten samples in, the curve occupies nine gaps at the right and nothing else.
         let oldest = newest - 9.0 * step;
-        assert!(oldest > left + width * 0.8, "the start squeezed left: {oldest}");
-        assert!((newest - (left + width)).abs() < 1e-3, "the newest sample left the right edge");
+        assert!(
+            oldest > left + width * 0.8,
+            "the start squeezed left: {oldest}"
+        );
+        assert!(
+            (newest - (left + width)).abs() < 1e-3,
+            "the newest sample left the right edge"
+        );
     }
 
     #[test]

@@ -20,6 +20,7 @@
 use std::fs::File;
 use std::io::ErrorKind;
 use std::os::unix::fs::FileExt;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// The aggregate `cpu` line is ten numbers; it never approaches this. Asking
@@ -32,15 +33,15 @@ const MEMINFO_LIMIT: usize = 4096;
 const LOADAVG_LIMIT: usize = 128;
 /// Growth ceiling for the two files whose length depends on the machine.
 const GROW_LIMIT: usize = 256 * 1024;
-/// The whole-device list is re-read this often. Disks do not come and go on a
-/// desktop, and scanning `/sys/block` every tick would dwarf the sample.
-const DISK_RESCAN: Duration = Duration::from_secs(30);
+/// The device lists are re-read this often. Disks and network cards do not come
+/// and go on a desktop, and scanning `/sys` every tick would dwarf the sample.
+const DEVICE_RESCAN: Duration = Duration::from_secs(30);
 /// Sector size assumed by `/proc/diskstats`, fixed by the kernel ABI
 /// regardless of the drive's real sector size.
 const SECTOR_BYTES: u64 = 512;
-/// Block devices whose traffic is either a duplicate of a real device
-/// (mappers, raid, partitions are not listed here) or noise.
-const SKIP_DISK_PREFIXES: [&str; 6] = ["loop", "ram", "zram", "dm-", "md", "nbd"];
+/// SCSI device type of an optical drive, as `/sys/block/sr0/device/type` spells
+/// it. A drive is real hardware, so the `device` link alone does not drop it.
+const SCSI_TYPE_ROM: &str = "5";
 
 /// Which sources this tick needs. A `false` here is a syscall not made.
 #[derive(Debug, Clone, Copy, Default)]
@@ -76,9 +77,9 @@ pub struct Sample {
     /// Bytes: used.
     pub swap_used: u64,
     pub swap_total: u64,
-    /// Bytes per second: in, out.
+    /// Bytes per second: in, out. The sum over [`Probe::nets`].
     pub net: [f64; 2],
-    /// Bytes per second: read, written.
+    /// Bytes per second: read, written. The sum over [`Probe::disks`].
     pub disk: [f64; 2],
     /// One-minute load average.
     pub load: f32,
@@ -103,6 +104,37 @@ pub struct MemDetail {
     pub slab_unreclaimable: u64,
 }
 
+/// One device's share of a counter file: what the kernel calls it, and what it did over the
+/// last tick.
+///
+/// Handed out as a slice for the same reason [`Probe::cpu_cores`] is: [`Sample`] is `Copy`,
+/// and a `Vec` inside it would cost every consumer an allocation a tick. The counters behind
+/// the rate are private - a device is identified by its name and nothing else.
+#[derive(Debug, Clone, Default)]
+pub struct DeviceRate {
+    /// `nvme0n1`, `sda`, `enp5s0` - the name in `/sys`, which is also the key in
+    /// `/proc/diskstats` and `/proc/net/dev`.
+    pub name: Box<str>,
+    /// Bytes per second: read and written for a disk, in and out for an interface.
+    pub rate: [f64; 2],
+    prev: Option<[u64; 2]>,
+    /// Cleared before every walk. A device the counter file stopped listing would otherwise
+    /// hold its last rate until the next rescan.
+    seen: bool,
+}
+
+impl DeviceRate {
+    /// Folds this tick's counters in. The first pair seen has nothing to subtract from and
+    /// yields zero, which is the same rule the machine-wide counters follow.
+    fn step(&mut self, cur: [u64; 2], dt: f64) {
+        self.seen = true;
+        self.rate = match self.prev.replace(cur) {
+            Some(prev) => rate(&cur, &prev, dt),
+            None => [0.0; 2],
+        };
+    }
+}
+
 /// Jiffy counters of the aggregate `cpu` line.
 #[derive(Debug, Clone, Copy, Default)]
 struct Cpu {
@@ -122,14 +154,14 @@ pub struct Probe {
     /// Shared read buffer. Grows to the largest source and stays there.
     buf: Vec<u8>,
     cpu_prev: Option<Cpu>,
-    net_prev: Option<[u64; 2]>,
-    disk_prev: Option<[u64; 2]>,
     stamp: Option<Instant>,
     /// Whole block devices, as named in `/sys/block`, minus the synthetic
     /// ones. Partitions are absent from `/sys/block` by construction, which
     /// is exactly the filter `/proc/diskstats` needs.
-    disks: Vec<Box<str>>,
-    disks_stamp: Option<Instant>,
+    disks: Vec<DeviceRate>,
+    /// Network cards, as named in `/sys/class/net`, minus everything virtual.
+    nets: Vec<DeviceRate>,
+    devices_stamp: Option<Instant>,
     /// Per-core shares of the last tick, in `/proc/stat` order. Grown once and reused, so
     /// the per-core walk allocates nothing after the first tick.
     cpu_cores: Vec<[f32; 4]>,
@@ -152,11 +184,10 @@ impl Probe {
             loadavg: None,
             buf: Vec::new(),
             cpu_prev: None,
-            net_prev: None,
-            disk_prev: None,
             stamp: None,
             disks: Vec::new(),
-            disks_stamp: None,
+            nets: Vec::new(),
+            devices_stamp: None,
             cpu_cores: Vec::new(),
             cpu_cores_prev: Vec::new(),
         }
@@ -168,6 +199,21 @@ impl Probe {
     /// through [`Sample`], which is `Copy` and would have to allocate.
     pub fn cpu_cores(&self) -> &[[f32; 4]] {
         &self.cpu_cores
+    }
+
+    /// The disks behind [`Sample::disk`], in name order, as of the last tick.
+    ///
+    /// Empty until [`Sources::disk`] has been asked for once. The order is stable across
+    /// ticks, so a caller may keep a history per index between rescans.
+    pub fn disks(&self) -> &[DeviceRate] {
+        &self.disks
+    }
+
+    /// The interfaces behind [`Sample::net`], in name order, as of the last tick.
+    ///
+    /// Empty until [`Sources::network`] has been asked for once.
+    pub fn nets(&self) -> &[DeviceRate] {
+        &self.nets
     }
 
     /// Reads every enabled source once. The first call has no previous
@@ -190,7 +236,7 @@ impl Probe {
             self.sample_meminfo(&mut out, want);
         }
         if want.network {
-            self.sample_net(&mut out, dt);
+            self.sample_net(&mut out, dt, now);
         }
         if want.disk {
             self.sample_disk(&mut out, dt, now);
@@ -325,7 +371,8 @@ impl Probe {
         let (mut total, mut free, mut buffers, mut cached) = (0u64, 0u64, 0u64, 0u64);
         let (mut sreclaim, mut shmem) = (0u64, 0u64);
         let (mut swap_total, mut swap_free) = (0u64, 0u64);
-        let (mut available, mut committed, mut commit_limit, mut sunreclaim) = (0u64, 0u64, 0u64, 0u64);
+        let (mut available, mut committed, mut commit_limit, mut sunreclaim) =
+            (0u64, 0u64, 0u64, 0u64);
         let mut found = 0u8;
         // The eight keys the strip needs all sit above `SReclaimable`; the four the window
         // adds are further down, and only then is the tail of the file worth walking.
@@ -383,7 +430,8 @@ impl Probe {
         }
     }
 
-    fn sample_net(&mut self, out: &mut Sample, dt: f64) {
+    fn sample_net(&mut self, out: &mut Sample, dt: f64, now: Instant) {
+        self.rescan(now);
         let Some(file) = open(&mut self.netdev, "/proc/net/dev") else {
             return;
         };
@@ -391,40 +439,32 @@ impl Probe {
             return;
         };
 
-        let mut rx = 0u64;
-        let mut tx = 0u64;
+        for meter in &mut self.nets {
+            meter.seen = false;
+        }
         // Two header lines, then "iface: rx_bytes ... tx_bytes ...".
         for line in self.buf[..n].split(|&b| b == b'\n').skip(2) {
             let Some((iface, rest)) = split_key(line) else {
                 continue;
             };
-            // Loopback traffic is the machine talking to itself; MATE keeps
-            // it out of the in/out bands too.
-            if iface == b"lo" {
+            let Some(meter) = self.nets.iter_mut().find(|m| m.name.as_bytes() == iface) else {
                 continue;
-            }
+            };
             let mut f = fields(rest);
             let Some(rx_bytes) = f.next() else { continue };
-            rx += atou64(rx_bytes);
+            let mut cur = [atou64(rx_bytes), 0];
             // rx: bytes packets errs drop fifo frame compressed multicast
             if let Some(tx_bytes) = f.nth(7) {
-                tx += atou64(tx_bytes);
+                cur[1] = atou64(tx_bytes);
             }
+            meter.step(cur, dt);
         }
 
-        if let Some(prev) = self.net_prev.replace([rx, tx]) {
-            out.net = rate(&[rx, tx], &prev, dt);
-        }
+        out.net = settle(&mut self.nets);
     }
 
     fn sample_disk(&mut self, out: &mut Sample, dt: f64, now: Instant) {
-        if self
-            .disks_stamp
-            .is_none_or(|stamp| now.duration_since(stamp) >= DISK_RESCAN)
-        {
-            self.rescan_disks();
-            self.disks_stamp = Some(now);
-        }
+        self.rescan(now);
         let Some(file) = open(&mut self.diskstats, "/proc/diskstats") else {
             return;
         };
@@ -432,28 +472,29 @@ impl Probe {
             return;
         };
 
-        let mut read = 0u64;
-        let mut written = 0u64;
+        for meter in &mut self.disks {
+            meter.seen = false;
+        }
         for line in self.buf[..n].split(|&b| b == b'\n') {
             // major minor name reads merged sectors_read ms writes merged
             // sectors_written ...
             let mut f = fields(line).skip(2);
             let Some(name) = f.next() else { continue };
-            if !self.disks.iter().any(|d| d.as_bytes() == name) {
+            let Some(meter) = self.disks.iter_mut().find(|m| m.name.as_bytes() == name) else {
                 continue;
-            }
+            };
             let mut f = f.skip(2);
+            let mut cur = [0u64; 2];
             if let Some(sectors) = f.next() {
-                read += atou64(sectors) * SECTOR_BYTES;
+                cur[0] = atou64(sectors) * SECTOR_BYTES;
             }
             if let Some(sectors) = f.nth(3) {
-                written += atou64(sectors) * SECTOR_BYTES;
+                cur[1] = atou64(sectors) * SECTOR_BYTES;
             }
+            meter.step(cur, dt);
         }
 
-        if let Some(prev) = self.disk_prev.replace([read, written]) {
-            out.disk = rate(&[read, written], &prev, dt);
-        }
+        out.disk = settle(&mut self.disks);
     }
 
     fn sample_load(&mut self, out: &mut Sample) {
@@ -471,23 +512,108 @@ impl Probe {
         }
     }
 
-    /// `/sys/block` lists whole devices only, so it is the partition filter
-    /// `/proc/diskstats` lacks. Synthetic devices are dropped by name: their
-    /// traffic is a second copy of a real device's.
-    fn rescan_disks(&mut self) {
-        let Ok(dir) = std::fs::read_dir("/sys/block") else {
+    /// Re-reads both device lists, at most once every [`DEVICE_RESCAN`].
+    ///
+    /// One stamp for the two: a tick that reads either source is a tick that can afford the
+    /// other scan, and two stamps would drift apart for no gain.
+    fn rescan(&mut self, now: Instant) {
+        if self
+            .devices_stamp
+            .is_some_and(|stamp| now.duration_since(stamp) < DEVICE_RESCAN)
+        {
             return;
-        };
-        self.disks.clear();
-        for entry in dir.flatten() {
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else { continue };
-            if SKIP_DISK_PREFIXES.iter().any(|p| name.starts_with(p)) {
-                continue;
-            }
-            self.disks.push(Box::from(name));
+        }
+        self.devices_stamp = Some(now);
+        if let Some(names) = scan("/sys/block", is_disk) {
+            retain(&mut self.disks, &names);
+        }
+        if let Some(names) = scan("/sys/class/net", is_interface) {
+            retain(&mut self.nets, &names);
         }
     }
+}
+
+/// Names in a `/sys` directory that pass a test, sorted so that the order a caller sees does
+/// not depend on the order the filesystem happened to hand them over.
+///
+/// `None` when the directory cannot be read at all, which leaves the previous list standing
+/// rather than emptying it.
+fn scan(dir: &str, keep: fn(&Path) -> bool) -> Option<Vec<Box<str>>> {
+    let mut names: Vec<Box<str>> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|entry| keep(&entry.path()))
+        .filter_map(|entry| entry.file_name().to_str().map(Box::from))
+        .collect();
+    names.sort_unstable();
+    Some(names)
+}
+
+/// A whole block device backed by real hardware, and not an optical drive.
+///
+/// The `device` link is the filter `/sys/block` needs: loop, ram, zram, dm-\* and md\* have
+/// none, and partitions are not listed here at all. A drive does have one, and is dropped
+/// separately - an empty tray is not a disk of the machine.
+fn is_disk(path: &Path) -> bool {
+    path.join("device").exists() && !holds(path.join("device/type"), SCSI_TYPE_ROM)
+}
+
+/// A network card of this machine, with its link up.
+///
+/// `/proc/net/dev` counts everything the kernel routes over, and on a machine with
+/// containers that is sixty veth pairs, ten bridges and the card - where one packet is
+/// counted three times. What is left here is what the reference lists.
+fn is_interface(path: &Path) -> bool {
+    // A wireless card in managed mode reports ARPHRD_ETHER like any other, so the wireless
+    // directory is the test and `type` is not.
+    let hardware = path.join("device").exists()
+        || path.join("wireless").is_dir()
+        || path.join("phy80211").exists();
+    hardware && !holds(path.join("operstate"), "down")
+}
+
+/// Whether a one-line `/sys` attribute reads exactly this. A file that is missing, or that
+/// answers with an error - `speed` and `duplex` do while the link is down - reads as no.
+fn holds(path: PathBuf, value: &str) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|text| text.trim() == value)
+}
+
+/// Rebuilds a meter list to match the names just scanned, in that order.
+///
+/// A device that stayed keeps its counters, so a rescan does not cost it a tick of history.
+/// One that came back after an absence starts over: its counters restarted with it.
+fn retain(meters: &mut Vec<DeviceRate>, names: &[Box<str>]) {
+    if meters.len() == names.len() && meters.iter().zip(names).all(|(m, n)| m.name == *n) {
+        return;
+    }
+    let mut next = Vec::with_capacity(names.len());
+    for name in names {
+        match meters.iter().position(|m| m.name == *name) {
+            Some(i) => next.push(meters.swap_remove(i)),
+            None => next.push(DeviceRate {
+                name: name.clone(),
+                ..DeviceRate::default()
+            }),
+        }
+    }
+    *meters = next;
+}
+
+/// Zeroes the devices the counter file did not mention this tick and returns the total.
+///
+/// A device that vanished between rescans - a stick pulled out, a cable unplugged - would
+/// otherwise hold its last rate for half a minute and be added into the sum all the while.
+fn settle(meters: &mut [DeviceRate]) -> [f64; 2] {
+    let mut total = [0.0; 2];
+    for meter in meters {
+        if !meter.seen {
+            meter.rate = [0.0; 2];
+            meter.prev = None;
+        }
+        total[0] += meter.rate[0];
+        total[1] += meter.rate[1];
+    }
+    total
 }
 
 /// Opens the path once and hands out the descriptor from then on. A source
@@ -693,5 +819,71 @@ mod tests {
             ..Sources::default()
         });
         assert!(probe.cpu_cores().is_empty());
+    }
+
+    /// The machine-wide figure is the devices added up, and stays that way. A window draws
+    /// the parts and a panel draws the total; the two have to agree.
+    #[test]
+    fn the_total_is_the_devices_added_up() {
+        let want = Sources {
+            network: true,
+            disk: true,
+            ..Sources::default()
+        };
+        let mut probe = Probe::new();
+        let _ = probe.sample(want);
+        std::thread::sleep(Duration::from_millis(120));
+        let second = probe.sample(want);
+
+        assert!(
+            !probe.disks().is_empty(),
+            "a running machine has at least one disk"
+        );
+        for (figure, meters) in [(second.disk, probe.disks()), (second.net, probe.nets())] {
+            let mut sum = [0.0; 2];
+            for meter in meters {
+                sum[0] += meter.rate[0];
+                sum[1] += meter.rate[1];
+            }
+            for (part, whole) in sum.iter().zip(figure) {
+                assert!((part - whole).abs() < 1.0, "{part} against {whole}");
+            }
+        }
+    }
+
+    /// A rescan is not allowed to cost a device its counters: a disk that was there before
+    /// and is there now keeps the same meter, and only the newcomer starts from nothing.
+    #[test]
+    fn a_rescan_keeps_the_counters_of_what_stayed() {
+        let mut meters = Vec::new();
+        retain(&mut meters, &[Box::from("sda"), Box::from("sdb")]);
+        meters[0].step([100, 100], 1.0);
+        meters[0].step([200, 200], 1.0);
+        assert_eq!(meters[0].rate, [100.0, 100.0]);
+
+        // sdb pulled out, nvme0n1 plugged in. Order follows the names given.
+        retain(&mut meters, &[Box::from("nvme0n1"), Box::from("sda")]);
+        assert_eq!(meters.len(), 2);
+        assert_eq!(&*meters[0].name, "nvme0n1");
+        assert!(
+            meters[0].prev.is_none(),
+            "a new device has nothing to subtract from"
+        );
+        assert_eq!(meters[1].rate, [100.0, 100.0], "sda kept its rate");
+        assert!(meters[1].prev.is_some(), "sda kept its counters");
+    }
+
+    /// A device the counter file stopped listing reads as idle, not as busy forever.
+    #[test]
+    fn a_device_that_went_quiet_stops_counting() {
+        let mut meters = Vec::new();
+        retain(&mut meters, &[Box::from("sda")]);
+        meters[0].step([100, 0], 1.0);
+        meters[0].step([200, 0], 1.0);
+        assert_eq!(settle(&mut meters), [100.0, 0.0]);
+
+        meters[0].seen = false;
+        assert_eq!(settle(&mut meters), [0.0, 0.0]);
+        assert_eq!(meters[0].rate, [0.0, 0.0]);
     }
 }
