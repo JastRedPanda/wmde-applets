@@ -114,6 +114,10 @@ impl SysmonApplet {
             // would have to be read to fill them.
             cpu_cores: false,
             memory: self.config.memory,
+            // Available, committed and the slab are figures for a window to print. The
+            // strip draws bands, and reading them would walk the tail of /proc/meminfo
+            // every tick for nothing.
+            memory_detail: false,
             network: self.config.network,
             swap: self.config.swap,
             load: self.config.load,
