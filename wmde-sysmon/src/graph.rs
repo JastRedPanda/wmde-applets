@@ -144,6 +144,21 @@ impl Kind {
         }
     }
 
+    /// How many bands the curve stacks, which is not always all of them.
+    ///
+    /// The curve has to draw the number the window prints beside it, and for memory that
+    /// number is what is in use: buffers and page cache are memory the kernel hands back on
+    /// demand, so stacking them puts the fill at more than three times the printed figure.
+    /// Every other kind prints the sum of its bands, so for them the two agree already.
+    ///
+    /// The band style is untouched: an applet strip stacks the whole breakdown on purpose.
+    pub const fn curve_bands(self) -> usize {
+        match self {
+            Kind::Memory => 1,
+            _ => self.bands().len(),
+        }
+    }
+
     /// `None` - the pushed values are already fractions of a known total and
     /// the graph is drawn against 1.0. `Some(floor)` - the graph auto-scales
     /// to the tallest column in view, but never to less than `floor`, so that
@@ -546,7 +561,8 @@ impl<'a> Strip<'a> {
         let scale = normalizer(kind, ring, columns);
         let bottom = at.y + at.height;
         let column = |i: usize| ring.column(ring.len() - columns + i);
-        let top_at = |i: usize| bottom - stack_height(column(i), bands.len(), scale, at.height);
+        let drawn = kind.curve_bands();
+        let top_at = |i: usize| bottom - stack_height(column(i), drawn, scale, at.height);
 
         // A sample is a span of time, not a pixel: the whole capacity covers the whole width,
         // so a graph that has only just started fills in from the right rather than being
@@ -680,6 +696,26 @@ mod tests {
         assert_eq!(ring.len(), 3);
         let seen: Vec<f32> = (0..3).map(|i| ring.column(i)[0]).collect();
         assert_eq!(seen, vec![2.0, 3.0, 4.0], "oldest first, newest last");
+    }
+
+    #[test]
+    fn the_memory_curve_draws_what_the_window_prints() {
+        // The window prints `used / total` beside the graph; the fill has to match it.
+        let (used, buffers, cache) = (0.166_f32, 0.010, 0.405);
+        let mut ring = Ring::new(Kind::Memory.bands().len(), 4);
+        ring.push(&[used, buffers, cache]);
+
+        let height = 100.0;
+        let drawn = stack_height(ring.column(0), Kind::Memory.curve_bands(), 1.0, height);
+        assert!(
+            (drawn - 17.0).abs() < 1.0,
+            "the fill must stand at what is in use, not at {drawn} of {height}"
+        );
+
+        // Every other kind prints the sum of its bands, so it keeps stacking all of them.
+        assert_eq!(Kind::Cpu.curve_bands(), Kind::Cpu.bands().len());
+        assert_eq!(Kind::Network.curve_bands(), Kind::Network.bands().len());
+        assert_eq!(Kind::Disk.curve_bands(), Kind::Disk.bands().len());
     }
 
     #[test]
