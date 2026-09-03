@@ -320,12 +320,14 @@ pub enum Style {
     /// Bands stacked from the bottom on a filled plate, no grid. What fits in the few
     /// pixels a panel applet has, and what says which kind of load it is.
     Bands,
-    /// The total as one curve with its own fill, over a grid of square cells, on no plate
-    /// of its own. What a window has room for.
+    /// The total as one curve with its own fill, over a grid of a fixed number of cells,
+    /// on no plate of its own. What a window has room for.
     ///
-    /// `cell` is the side of a grid square in pixels. There is no theme step for it: the
-    /// grid is a property of the graph, not of the layout around it.
-    Curve { cell: f32 },
+    /// `cols` by `rows` is that count, not a size: the grid divides whatever the graph is
+    /// given, so a cell always means the same thing and no stub is left against an edge.
+    /// There is no theme step for either - the grid is a property of the graph, not of the
+    /// layout around it.
+    Curve { cols: u16, rows: u16 },
 }
 
 impl Default for Style {
@@ -409,24 +411,26 @@ impl<'a> Strip<'a> {
         kind: Kind,
         at: Rectangle,
     ) {
-        let curve_cell = match self.style {
+        // Under `Curve` every line of the graph is one hue: grid, frame and curve alike.
+        // The reference frames each tile in the colour of what the tile plots, so the tile
+        // reads as a card belonging to that device rather than as a box with a chart in it.
+        let ink = self.colors.band(kind.bands()[0], theme);
+        let curve = match self.style {
             Style::Bands => {
                 frame.fill_rectangle(at.position(), at.size(), self.colors.background(theme));
-                None
+                false
             }
-            // No plate: the window's own colour is the ground, and what would have been the
-            // plate becomes the grid. That is the same theme value in both styles, and it is
-            // the arrangement the reference has.
-            Style::Curve { cell } => {
-                self.draw_grid(frame, theme, at, cell);
-                Some(cell)
+            // No plate: the window's own colour is the ground, and the grid is drawn over it.
+            Style::Curve { cols, rows } => {
+                self.draw_grid(frame, at, ink, cols, rows);
+                true
             }
         };
 
         let ring = &self.rings[kind.index()];
         let bands = kind.bands();
         let columns = ring.len().min(at.width as usize);
-        if let (Some(_), true) = (curve_cell, columns > 0) {
+        if curve && columns > 0 {
             self.draw_curve(frame, theme, kind, at, columns);
         } else if columns > 0 {
             let scale = normalizer(kind, ring, columns);
@@ -471,47 +475,57 @@ impl<'a> Strip<'a> {
             }
         }
 
-        // Half-pixel inset so a 1px stroke lands on the pixel, not across it.
+        // Half-pixel inset so a 1px stroke lands on the pixel, not across it - and the
+        // edges are rounded to whole pixels first. Without that the inset is measured from
+        // a fractional origin, the stroke straddles two rows, and two tiles side by side in
+        // a grid come out with outlines of visibly different weight.
+        let left = at.x.round();
+        let top = at.y.round();
         let border = canvas::Path::rectangle(
-            Point::new(at.x + 0.5, at.y + 0.5),
-            Size::new(at.width - 1.0, at.height - 1.0),
+            Point::new(left + 0.5, top + 0.5),
+            Size::new(
+                (at.x + at.width).round() - left - 1.0,
+                (at.y + at.height).round() - top - 1.0,
+            ),
         );
         frame.stroke(
             &border,
             canvas::Stroke::default()
-                .with_color(self.colors.border(theme))
+                .with_color(if curve { ink } else { self.colors.border(theme) })
                 .with_width(1.0),
         );
     }
 
-    /// Square cells of a fixed side, laid from the right edge and from the bottom, so that
-    /// the newest sample and the zero line both sit on a line rather than between two.
-    fn draw_grid(&self, frame: &mut canvas::Frame, theme: &cosmic::Theme, at: Rectangle, cell: f32) {
-        if cell < 1.0 {
-            return;
-        }
-        let color = self.colors.background(theme);
+    /// A fixed number of cells, however large the graph is.
+    ///
+    /// The reference divides a tile into the same count whatever the tile measures, so a
+    /// cell always means the same thing - a span of time across, a share of the scale up -
+    /// and every cell is whole. A fixed cell side in pixels cannot do that: the count then
+    /// changes with the size, and the remainder lands against one edge as a stub.
+    fn draw_grid(&self, frame: &mut canvas::Frame, at: Rectangle, ink: Color, cols: u16, rows: u16) {
+        // The same hue as the curve, far enough down to stay behind it. Derived rather than
+        // written out, so a change of palette carries the grid with it.
+        let mut color = ink;
+        color.a *= 0.19;
         let stroke = canvas::Stroke::default().with_color(color).with_width(1.0);
 
-        let mut x = at.x + at.width - cell;
-        while x > at.x {
+        for i in 1..cols {
+            let x = at.x + at.width * f32::from(i) / f32::from(cols);
             // Half-pixel inset so a 1px stroke lands on the pixel and not across two.
             let line = canvas::Path::line(
                 Point::new(x.round() + 0.5, at.y),
                 Point::new(x.round() + 0.5, at.y + at.height),
             );
             frame.stroke(&line, stroke.clone());
-            x -= cell;
         }
 
-        let mut y = at.y + at.height - cell;
-        while y > at.y {
+        for i in 1..rows {
+            let y = at.y + at.height * f32::from(i) / f32::from(rows);
             let line = canvas::Path::line(
                 Point::new(at.x, y.round() + 0.5),
                 Point::new(at.x + at.width, y.round() + 0.5),
             );
             frame.stroke(&line, stroke.clone());
-            y -= cell;
         }
     }
 
@@ -561,8 +575,8 @@ impl<'a> Strip<'a> {
         let mut fill = color;
         // The same hue muted down to the ground, which is what the reference does with a
         // separate pair of colours per device. Derived rather than written out, so a palette
-        // change carries it.
-        fill.a *= 0.25;
+        // change carries it. 0.39 is the measured ratio of fill to curve in the reference.
+        fill.a *= 0.39;
         frame.fill(&area, fill);
 
         color.a = 1.0;
