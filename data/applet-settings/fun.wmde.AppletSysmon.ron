@@ -74,6 +74,21 @@
             ],
         ),
         (
+            title: { "": "Behaviour", "uk": "Поведінка" },
+            rows: [
+                Setting(
+                    key: "open_task_manager",
+                    label: { "": "Click opens the task manager", "uk": "Клац відкриває диспетчер завдань" },
+                    description: {
+                        "": "A click anywhere on the graphs opens WMDE Task Manager. With it off a click does nothing.",
+                        "uk": "Клац будь-де на графіках відкриває Диспетчер завдань WMDE. Коли вимкнено, клац нічого не робить.",
+                    },
+                    control: Toggle,
+                    default: "true",
+                ),
+            ],
+        ),
+        (
             title: { "": "Size and rate", "uk": "Розмір і частота" },
             rows: [
                 Setting(

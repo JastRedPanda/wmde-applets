@@ -19,6 +19,12 @@ pub struct SysmonAppletConfig {
     /// thickness. At 100 the graphs run from edge to edge with no padding
     /// left over.
     pub height_percent: u32,
+    /// A click on the applet opens the task manager.
+    ///
+    /// The MATE applet this follows does nothing on a click, but a strip of
+    /// load graphs is where a person looks first when the machine drags, and
+    /// the next thing they want is the list of what is dragging it.
+    pub open_task_manager: bool,
     pub cpu: bool,
     pub memory: bool,
     pub network: bool,
@@ -48,6 +54,7 @@ impl Default for SysmonAppletConfig {
             interval_ms: 1000,
             graph_width: 40,
             height_percent: 80,
+            open_task_manager: true,
             // The two graphs MATE also shows by default; the rest are one
             // toggle away in the settings page.
             cpu: true,

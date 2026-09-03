@@ -2,10 +2,15 @@
 
 //! The panel applet: a strip of graphs, a tooltip on each, and nothing else.
 //!
-//! There is no popup and no window. A click does nothing, exactly as in the
-//! MATE applet this follows; the numbers behind a graph are in its own
-//! tooltip, and the settings live in the Settings page built from
+//! There is no popup and no window of its own. The numbers behind a graph are
+//! in its own tooltip, a click opens the task manager, and the settings live
+//! in the Settings page built from
 //! `data/applet-settings/fun.wmde.AppletSysmon.ron`.
+//!
+//! The MATE applet this follows does nothing on a click. A strip of load
+//! graphs is where a person looks first when the machine drags, though, and
+//! the next thing they want is the list of what is dragging it - so the click
+//! is wired, and `open_task_manager` turns it off for anyone who disagrees.
 //!
 //! Each graph is its own widget rather than one strip over all of them,
 //! because a tooltip is attached to a widget and the three graphs answer
@@ -23,6 +28,8 @@ use wmde_sysmon::graph::{self, Colors, Kind, MAX_BANDS, Metrics, Ring, Strip};
 use wmde_sysmon::probe::{Probe, Sample, Sources};
 use cosmic::{
     Element, Task, app,
+    applet::token::subscription::{TokenRequest, TokenUpdate, activation_token_subscription},
+    cctk::sctk::reexports::calloop::channel,
     cosmic_theme::Spacing,
     iced::{
         Length, Subscription,
@@ -31,12 +38,17 @@ use cosmic::{
         widget::canvas,
     },
     surface, theme,
-    widget::{autosize, container},
+    widget::{autosize, button, container},
 };
 use cosmic_applets_config::sysmon::SysmonAppletConfig;
 use cosmic_config::CosmicConfigEntry;
 use std::sync::LazyLock;
 use std::time::Duration;
+
+/// What a click opens. Not a hard dependency of the package: without it
+/// installed the click does nothing at all, which is the same as turning
+/// `open_task_manager` off.
+const TASK_MANAGER: &str = "wmde-taskmgr";
 
 /// Bounds the settings page also declares. A width below this draws nothing
 /// readable; above it the applet would eat the panel.
@@ -74,6 +86,10 @@ struct SysmonApplet {
     /// coordinates, so each would throw away what the last one just stored.
     caches: [canvas::Cache; Kind::COUNT],
     last: Sample,
+    /// Handed over by the activation-token subscription at start-up. Without a
+    /// token the task manager opens unfocused and only marks itself urgent in
+    /// the panel, which is not what a click asked for.
+    token_tx: Option<channel::Sender<TokenRequest>>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +99,11 @@ enum Message {
     /// goes through the queue to the size of the whole config.
     ConfigChanged(Box<SysmonAppletConfig>),
     Surface(surface::Action),
+    /// The applet was clicked. Opens the task manager, unless turned off.
+    OpenTaskManager,
+    /// The compositor answered with an activation token, or the subscription
+    /// came up or went away.
+    Token(TokenUpdate),
 }
 
 impl SysmonApplet {
@@ -294,9 +315,21 @@ impl cosmic::Application for SysmonApplet {
     const APP_ID: &'static str = "fun.wmde.AppletSysmon";
 
     fn init(core: cosmic::app::Core, _flags: Self::Flags) -> (Self, app::Task<Self::Message>) {
+        // `get_entry` reports an error for every key that is not on disk yet,
+        // but the config it hands back with those errors already holds
+        // everything that IS on disk. Taking `.ok()` and falling back to the
+        // default throws all of it away, so the first release to add a key
+        // would silently reset every setting the person had chosen.
         let config = cosmic_config::Config::new(Self::APP_ID, SysmonAppletConfig::VERSION)
             .ok()
-            .and_then(|c| SysmonAppletConfig::get_entry(&c).ok())
+            .map(|c| {
+                SysmonAppletConfig::get_entry(&c).unwrap_or_else(|(errors, config)| {
+                    for err in errors {
+                        tracing::info!("sysmon applet config: {err}");
+                    }
+                    config
+                })
+            })
             .unwrap_or_default();
 
         let width = config.graph_width.clamp(MIN_WIDTH, MAX_WIDTH) as usize;
@@ -311,6 +344,7 @@ impl cosmic::Application for SysmonApplet {
             colors: Colors::default(),
             caches: std::array::from_fn(|_| canvas::Cache::new()),
             last: Sample::default(),
+            token_tx: None,
         };
         applet.apply_config();
 
@@ -343,6 +377,33 @@ impl cosmic::Application for SysmonApplet {
                     cosmic::app::Action::Surface(action),
                 ));
             }
+            // Ask the compositor for an activation token first. Spawning
+            // straight away opens the window behind whatever has focus.
+            Message::OpenTaskManager => {
+                if let Some(tx) = self.token_tx.as_ref() {
+                    let _ = tx.send(TokenRequest {
+                        app_id: Self::APP_ID.to_string(),
+                        exec: TASK_MANAGER.to_string(),
+                    });
+                } else {
+                    tracing::error!("no activation token channel");
+                }
+            }
+            Message::Token(update) => match update {
+                TokenUpdate::Init(tx) => self.token_tx = Some(tx),
+                TokenUpdate::Finished => self.token_tx = None,
+                TokenUpdate::ActivationToken { token, .. } => {
+                    let mut cmd = std::process::Command::new(TASK_MANAGER);
+                    if let Some(token) = token {
+                        cmd.env("XDG_ACTIVATION_TOKEN", &token);
+                        cmd.env("DESKTOP_STARTUP_ID", &token);
+                    }
+                    // A second copy does not start: it calls Present on the
+                    // one already running and exits, so the click raises the
+                    // window that is open rather than opening another.
+                    tokio::spawn(cosmic::process::spawn(cmd));
+                }
+            },
         }
         Task::none()
     }
@@ -431,7 +492,24 @@ impl cosmic::Application for SysmonApplet {
                 .padding([vertical_padding, 0])
         };
 
-        autosize::autosize(Element::from(framed), AUTOSIZE_MAIN_ID.clone()).into()
+        // One button around the whole row rather than one per graph: the
+        // hover highlight then covers the applet, the way every other panel
+        // item highlights, instead of lighting one graph out of three.
+        //
+        // A button hands the event to its child before it looks at it itself
+        // (`button/widget.rs`), so the tooltips inside still see the pointer
+        // move under them.
+        let clickable: Element<'_, Message> = if self.config.open_task_manager {
+            button::custom(framed)
+                .padding(0)
+                .class(cosmic::theme::Button::AppletIcon)
+                .on_press(Message::OpenTaskManager)
+                .into()
+        } else {
+            framed.into()
+        };
+
+        autosize::autosize(clickable, AUTOSIZE_MAIN_ID.clone()).into()
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -454,12 +532,15 @@ impl cosmic::Application for SysmonApplet {
             Message::ConfigChanged(Box::new(update.config))
         });
 
+        let tokens = activation_token_subscription(0).map(Message::Token);
+
         // With every graph switched off there is nothing to sample, so the
-        // timer is not created at all.
+        // timer is not created at all. The token channel stays either way:
+        // the icon that stands in for the graphs is clickable too.
         if self.kinds.is_empty() {
-            config
+            Subscription::batch([config, tokens])
         } else {
-            Subscription::batch([tick_subscription(self.interval()), config])
+            Subscription::batch([tick_subscription(self.interval()), config, tokens])
         }
     }
 

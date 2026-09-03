@@ -19,6 +19,9 @@ license=('GPL-3.0-only')
 # labels in. The theme is what NAMES them (fun.wmde.Tk moved to wmde-themes, which
 # declares the same dependency); this one keeps the applets standing on their own.
 depends=('glibc' 'gcc-libs' 'wayland' 'libxkbcommon' 'libpulse' 'pipewire' 'noto-fonts')
+# Not a hard dependency: without it a click on the system monitor does nothing,
+# which is the same as turning that setting off.
+optdepends=('wmde-taskmgr: a click on the system monitor applet opens it')
 makedepends=('rust' 'cargo' 'just' 'git' 'wayland' 'clang' 'lld' 'pkgconf')
 # !lto: the weather applet links rustls/ring, whose C core is compiled by gcc with
 # makepkg's CFLAGS. With the default lto option gcc emits LTO bytecode objects that
