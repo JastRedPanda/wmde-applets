@@ -551,7 +551,7 @@ impl<'a> Strip<'a> {
         // A sample is a span of time, not a pixel: the whole capacity covers the whole width,
         // so a graph that has only just started fills in from the right rather than being
         // squeezed into sixty pixels of it.
-        let step = at.width / ring.capacity().max(1) as f32;
+        let step = curve_step(at.width, ring.capacity());
         let newest = at.x + at.width;
         let x_at = |i: usize| newest - (columns - 1 - i) as f32 * step;
 
@@ -585,6 +585,15 @@ impl<'a> Strip<'a> {
             canvas::Stroke::default().with_color(color).with_width(1.0),
         );
     }
+}
+
+/// Distance along the graph between two neighbouring samples of a curve.
+///
+/// `n` samples make `n - 1` gaps, so a full ring divided by the capacity itself leaves one
+/// gap's worth of width unspent - and since the newest sample is pinned to the right edge, all
+/// of it collects at the left one, where it reads as a graph that stops short of its own frame.
+fn curve_step(width: f32, capacity: usize) -> f32 {
+    width / (capacity.max(2) - 1) as f32
 }
 
 /// Height in whole pixels of the first `upto` bands of one column, stacked
@@ -671,6 +680,30 @@ mod tests {
         assert_eq!(ring.len(), 3);
         let seen: Vec<f32> = (0..3).map(|i| ring.column(i)[0]).collect();
         assert_eq!(seen, vec![2.0, 3.0, 4.0], "oldest first, newest last");
+    }
+
+    #[test]
+    fn a_full_curve_touches_both_edges() {
+        // The window the task manager plots: sixty samples over whatever width it is given.
+        let (left, width, capacity) = (285.0_f32, 703.0_f32, 60);
+        let step = curve_step(width, capacity);
+        let newest = left + width;
+        let oldest = newest - (capacity - 1) as f32 * step;
+        assert!(
+            (oldest - left).abs() < 1e-3,
+            "the oldest sample of a full ring must land on the left edge, not at {oldest}"
+        );
+    }
+
+    #[test]
+    fn a_partial_curve_still_fills_in_from_the_right() {
+        let (left, width, capacity) = (0.0_f32, 600.0_f32, 60);
+        let step = curve_step(width, capacity);
+        let newest = left + width;
+        // Ten samples in, the curve occupies nine gaps at the right and nothing else.
+        let oldest = newest - 9.0 * step;
+        assert!(oldest > left + width * 0.8, "the start squeezed left: {oldest}");
+        assert!((newest - (left + width)).abs() < 1e-3, "the newest sample left the right edge");
     }
 
     #[test]
