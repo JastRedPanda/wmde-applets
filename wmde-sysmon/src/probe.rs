@@ -52,6 +52,12 @@ pub struct Sources {
     /// deep without it, and the kernel does not format the per-core lines that would follow.
     pub cpu_cores: bool,
     pub memory: bool,
+    /// Also fill [`Sample::mem_detail`].
+    ///
+    /// Off by default and worth keeping off: the keys it needs sit past `SReclaimable`, and
+    /// without it the parse of `/proc/meminfo` stops there instead of walking the tail of the
+    /// file every tick.
+    pub memory_detail: bool,
     pub network: bool,
     pub swap: bool,
     pub load: bool,
@@ -76,6 +82,25 @@ pub struct Sample {
     pub disk: [f64; 2],
     /// One-minute load average.
     pub load: f32,
+    /// What [`Sources::memory_detail`] adds, and zero without it. Bytes throughout.
+    ///
+    /// These live below `SReclaimable` in `/proc/meminfo`, which is where the parse stops
+    /// when nobody asks for them.
+    pub mem_detail: MemDetail,
+}
+
+/// The second half of `/proc/meminfo`: what a window has room to print and a twenty-pixel
+/// strip does not.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemDetail {
+    /// `MemAvailable` - what a new allocation can have without pushing anything to swap.
+    pub available: u64,
+    /// `Committed_AS` against `CommitLimit`: what has been promised, and the ceiling.
+    pub committed: u64,
+    pub commit_limit: u64,
+    /// `SReclaimable` and `SUnreclaim`, the two halves of the slab.
+    pub slab_reclaimable: u64,
+    pub slab_unreclaimable: u64,
 }
 
 /// Jiffy counters of the aggregate `cpu` line.
@@ -300,7 +325,11 @@ impl Probe {
         let (mut total, mut free, mut buffers, mut cached) = (0u64, 0u64, 0u64, 0u64);
         let (mut sreclaim, mut shmem) = (0u64, 0u64);
         let (mut swap_total, mut swap_free) = (0u64, 0u64);
+        let (mut available, mut committed, mut commit_limit, mut sunreclaim) = (0u64, 0u64, 0u64, 0u64);
         let mut found = 0u8;
+        // The eight keys the strip needs all sit above `SReclaimable`; the four the window
+        // adds are further down, and only then is the tail of the file worth walking.
+        let wanted = if want.memory_detail { 12 } else { 8 };
 
         for line in self.buf[..n].split(|&b| b == b'\n') {
             let Some((key, rest)) = split_key(line) else {
@@ -315,13 +344,15 @@ impl Probe {
                 b"Shmem" => &mut shmem,
                 b"SwapTotal" => &mut swap_total,
                 b"SwapFree" => &mut swap_free,
+                b"MemAvailable" if want.memory_detail => &mut available,
+                b"SUnreclaim" if want.memory_detail => &mut sunreclaim,
+                b"CommitLimit" if want.memory_detail => &mut commit_limit,
+                b"Committed_AS" if want.memory_detail => &mut committed,
                 _ => continue,
             };
             *slot = fields(rest).next().map_or(0, atou64) * 1024;
             found += 1;
-            // Everything wanted lives above SReclaimable; the rest of the
-            // file is not worth walking.
-            if found == 8 {
+            if found == wanted {
                 break;
             }
         }
@@ -336,6 +367,15 @@ impl Probe {
                 .saturating_sub(cache);
             out.mem = [used, buffers, cache];
             out.mem_total = total;
+            if want.memory_detail {
+                out.mem_detail = MemDetail {
+                    available,
+                    committed,
+                    commit_limit,
+                    slab_reclaimable: sreclaim,
+                    slab_unreclaimable: sunreclaim,
+                };
+            }
         }
         if want.swap && swap_total > 0 {
             out.swap_used = swap_total.saturating_sub(swap_free);
@@ -591,6 +631,7 @@ mod tests {
             cpu: true,
             cpu_cores: true,
             memory: true,
+            memory_detail: true,
             network: true,
             swap: true,
             load: true,
@@ -599,6 +640,24 @@ mod tests {
         let first = probe.sample(want);
         assert!(first.mem_total > 0, "MemTotal must parse");
         assert!(first.mem[0] > 0, "used memory must parse");
+        // The four keys past `SReclaimable`, which the strip never asks for.
+        let detail = first.mem_detail;
+        assert!(detail.available > 0, "MemAvailable must parse");
+        assert!(detail.commit_limit > 0, "CommitLimit must parse");
+        assert!(detail.committed > 0, "Committed_AS must parse");
+        assert!(
+            detail.available <= first.mem_total,
+            "available beyond the total: {} of {}",
+            detail.available,
+            first.mem_total
+        );
+
+        // Without the flag the tail is not walked at all, and the block stays zero.
+        let plain = probe.sample(Sources {
+            memory_detail: false,
+            ..want
+        });
+        assert_eq!(plain.mem_detail, MemDetail::default());
         assert!(
             first.cpu.iter().all(|v| *v == 0.0),
             "no delta on first tick"
