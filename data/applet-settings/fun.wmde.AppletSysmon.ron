@@ -44,6 +44,10 @@
                 Setting(
                     key: "swap",
                     label: { "": "Swap", "uk": "Підкачка" },
+                    description: {
+                        "": "Used against total swap.",
+                        "uk": "Зайнято відносно всієї підкачки.",
+                    },
                     control: Toggle,
                     default: "false",
                 ),
@@ -51,8 +55,8 @@
                     key: "load",
                     label: { "": "Load average", "uk": "Середнє навантаження" },
                     description: {
-                        "": "One-minute load average.",
-                        "uk": "Середнє навантаження за хвилину.",
+                        "": "Tasks waiting their turn, averaged over a minute. Not processor load.",
+                        "uk": "Задачі, що чекають своєї черги, усереднено за хвилину. Це не завантаження процесора.",
                     },
                     control: Toggle,
                     default: "false",

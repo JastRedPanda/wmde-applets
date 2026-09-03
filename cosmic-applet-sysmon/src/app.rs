@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The panel applet: a strip of graphs, a tooltip, and nothing else.
+//! The panel applet: a strip of graphs, a tooltip on each, and nothing else.
 //!
 //! There is no popup and no window. A click does nothing, exactly as in the
-//! MATE applet this follows; the numbers behind the graphs are in the
+//! MATE applet this follows; the numbers behind a graph are in its own
 //! tooltip, and the settings live in the Settings page built from
 //! `data/applet-settings/fun.wmde.AppletSysmon.ron`.
+//!
+//! Each graph is its own widget rather than one strip over all of them,
+//! because a tooltip is attached to a widget and the three graphs answer
+//! three different questions - the difference between "how busy is the
+//! processor" and "how long is the run queue" is exactly what a tooltip is
+//! for. The gap between graphs moves from the strip to the row's spacing;
+//! the pixels are the same.
 //!
 //! Sampling happens inline in `update`: reading five `/proc` files takes
 //! microseconds, and handing that to `spawn_blocking` would cost more in
@@ -59,8 +66,13 @@ struct SysmonApplet {
     /// Enabled graphs in panel order. Rebuilt only when the config changes.
     kinds: Vec<Kind>,
     colors: Colors,
-    /// Cleared once per tick; that is the only thing that invalidates it.
-    cache: canvas::Cache,
+    /// One per graph, indexed by `Kind::index`. Cleared once per tick; that
+    /// is the only thing that invalidates them.
+    ///
+    /// One cache for all of them would not do: a `canvas::Cache` is keyed by
+    /// the bounds it was drawn at, and neighbouring graphs sit at different
+    /// coordinates, so each would throw away what the last one just stored.
+    caches: [canvas::Cache; Kind::COUNT],
     last: Sample,
 }
 
@@ -127,7 +139,13 @@ impl SysmonApplet {
         self.colors.background = graph::parse_color(&self.config.color_background);
         self.colors.border = graph::parse_color(&self.config.color_border);
 
-        self.cache.clear();
+        self.clear_caches();
+    }
+
+    fn clear_caches(&self) {
+        for cache in &self.caches {
+            cache.clear();
+        }
     }
 
     fn push(&mut self, sample: Sample) {
@@ -169,48 +187,63 @@ impl SysmonApplet {
         self.last = sample;
     }
 
-    /// One line per enabled graph, the way MATE puts the numbers behind the
-    /// picture into the tooltip.
-    fn tooltip_text(&self) -> String {
-        if self.kinds.is_empty() {
-            return fl!("tip-idle");
-        }
+    /// What one graph is showing: the reading, and under it what the reading
+    /// means.
+    ///
+    /// The second line matters more than it looks. Three graphs side by side
+    /// invite the reading that they are three views of one thing, and they
+    /// are not: memory counts the page cache the processor graph knows
+    /// nothing about, and load average counts a queue rather than any kind of
+    /// busyness at all. The wording is the settings page's own, so the toggle
+    /// and the graph it turns on say the same thing.
+    fn tooltip_for(&self, kind: Kind) -> String {
         let s = &self.last;
-        let mut out = String::with_capacity(96);
-        for kind in &self.kinds {
-            if !out.is_empty() {
-                out.push('\n');
+        let (reading, what) = match kind {
+            Kind::Cpu => {
+                let busy: f32 = s.cpu.iter().sum();
+                (
+                    fl!("tip-cpu", value = format!("{:.0}%", busy * 100.0)),
+                    fl!("what-cpu"),
+                )
             }
-            let line = match kind {
-                Kind::Cpu => {
-                    let busy: f32 = s.cpu.iter().sum();
-                    fl!("tip-cpu", value = format!("{:.0}%", busy * 100.0))
-                }
-                Kind::Memory => fl!(
+            Kind::Memory => (
+                fl!(
                     "tip-memory",
                     used = fmt_size(s.mem[0]),
                     total = fmt_size(s.mem_total)
                 ),
-                Kind::Network => fl!(
+                fl!("what-memory"),
+            ),
+            Kind::Network => (
+                fl!(
                     "tip-network",
                     rx = fmt_rate(s.net[0]),
                     tx = fmt_rate(s.net[1])
                 ),
-                Kind::Swap => fl!(
+                fl!("what-network"),
+            ),
+            Kind::Swap => (
+                fl!(
                     "tip-swap",
                     used = fmt_size(s.swap_used),
                     total = fmt_size(s.swap_total)
                 ),
-                Kind::Load => fl!("tip-load", value = format!("{:.2}", s.load)),
-                Kind::Disk => fl!(
+                fl!("what-swap"),
+            ),
+            Kind::Load => (
+                fl!("tip-load", value = format!("{:.2}", s.load)),
+                fl!("what-load"),
+            ),
+            Kind::Disk => (
+                fl!(
                     "tip-disk",
                     read = fmt_rate(s.disk[0]),
                     write = fmt_rate(s.disk[1])
                 ),
-            };
-            out.push_str(&line);
-        }
-        out
+                fl!("what-disk"),
+            ),
+        };
+        format!("{reading}\n{what}")
     }
 }
 
@@ -276,7 +309,7 @@ impl cosmic::Application for SysmonApplet {
             rings,
             kinds: Vec::with_capacity(Kind::COUNT),
             colors: Colors::default(),
-            cache: canvas::Cache::new(),
+            caches: std::array::from_fn(|_| canvas::Cache::new()),
             last: Sample::default(),
         };
         applet.apply_config();
@@ -297,7 +330,7 @@ impl cosmic::Application for SysmonApplet {
             Message::Tick => {
                 let sample = self.probe.sample(self.sources());
                 self.push(sample);
-                self.cache.clear();
+                self.clear_caches();
             }
             Message::ConfigChanged(config) => {
                 if *config != self.config {
@@ -335,24 +368,54 @@ impl cosmic::Application for SysmonApplet {
 
         let content: Element<'_, Message> = if self.kinds.is_empty() {
             // Nothing to draw, but the applet still has to be findable in the
-            // panel - otherwise it cannot be selected and removed.
-            cosmic::widget::icon::from_name("fun.wmde.AppletSysmon-symbolic")
-                .size(suggested.0)
-                .into()
+            // panel - otherwise it cannot be selected and removed. One
+            // tooltip over the icon, because there is no graph to point at.
+            let icon = cosmic::widget::icon::from_name("fun.wmde.AppletSysmon-symbolic")
+                .size(suggested.0);
+            Element::from(self.core.applet.applet_tooltip(
+                Element::from(icon),
+                fl!("tip-idle"),
+                false,
+                Message::Surface,
+                None,
+            ))
         } else {
-            Strip::new(
-                &self.kinds,
-                &self.rings,
-                &self.colors,
-                &self.cache,
-                Metrics {
-                    horizontal,
-                    length: self.width() as f32,
-                    thickness: graph_thickness(panel_thickness, self.config.height_percent),
-                    gap: f32::from(space_xxxs),
-                },
-            )
-            .into()
+            let metrics = Metrics {
+                horizontal,
+                length: self.width() as f32,
+                thickness: graph_thickness(panel_thickness, self.config.height_percent),
+                // The strip draws one graph now, so it has no gap of its own
+                // to draw. The spacing below puts back the same pixels.
+                gap: 0.0,
+            };
+            // `kinds` is in panel order, and each graph carries its own
+            // tooltip. `Strip` is handed a one-element slice - the same shape
+            // the task manager uses for the thumbnails in its rail.
+            let graphs: Vec<Element<'_, Message>> = self.kinds.iter().map(|kind| {
+                let strip = Strip::new(
+                    std::slice::from_ref(kind),
+                    &self.rings,
+                    &self.colors,
+                    &self.caches[kind.index()],
+                    metrics,
+                );
+                Element::from(self.core.applet.applet_tooltip(
+                    Element::from(strip),
+                    self.tooltip_for(*kind),
+                    false,
+                    Message::Surface,
+                    None,
+                ))
+            }).collect();
+            if horizontal {
+                cosmic::widget::row::with_children(graphs)
+                    .spacing(space_xxxs)
+                    .into()
+            } else {
+                cosmic::widget::column::with_children(graphs)
+                    .spacing(space_xxxs)
+                    .into()
+            }
         };
 
         // The strip is centered across the panel and padded only along it:
@@ -368,17 +431,7 @@ impl cosmic::Application for SysmonApplet {
                 .padding([vertical_padding, 0])
         };
 
-        autosize::autosize(
-            Element::from(self.core.applet.applet_tooltip(
-                Element::from(framed),
-                self.tooltip_text(),
-                false,
-                Message::Surface,
-                None,
-            )),
-            AUTOSIZE_MAIN_ID.clone(),
-        )
-        .into()
+        autosize::autosize(Element::from(framed), AUTOSIZE_MAIN_ID.clone()).into()
     }
 
     fn subscription(&self) -> Subscription<Message> {
