@@ -6,3 +6,6 @@ new-window = Нове вікно
 run = Виконати
 run-on = Запустити на { $gpu }
 run-on-default = (Основна)
+
+# Tooltip for the icon-only close cross on a window thumbnail
+close-window = Закрити вікно

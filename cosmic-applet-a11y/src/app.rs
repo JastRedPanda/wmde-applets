@@ -297,11 +297,22 @@ impl cosmic::Application for CosmicA11yApplet {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        self.core
+        // WMDE: the panel button is a bare glyph. applet_tooltip draws the hint as its own
+        // wayland subsurface and picks the side from the panel anchor; `has_popup` suppresses
+        // it while the popup is open.
+        let button = self
+            .core
             .applet
             .icon_button("preferences-desktop-accessibility-symbolic")
-            .on_press_down(Message::TogglePopup)
-            .into()
+            .on_press_down(Message::TogglePopup);
+
+        Element::from(self.core.applet.applet_tooltip(
+            Element::from(button),
+            fl!("accessibility"),
+            self.popup.is_some(),
+            Message::Surface,
+            None,
+        ))
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {

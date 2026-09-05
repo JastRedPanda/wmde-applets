@@ -1165,7 +1165,10 @@ name = "cosmic-applet-status-area"
 version = "1.0.15"
 dependencies = [
  "futures",
+ "i18n-embed",
+ "i18n-embed-fl",
  "libcosmic",
+ "rust-embed",
  "rustc-hash 2.1.3",
  "serde",
  "tokio",

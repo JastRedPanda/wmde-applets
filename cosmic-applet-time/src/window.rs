@@ -757,13 +757,24 @@ impl cosmic::Application for Window {
                 .to_string(),
         );
 
+        // WMDE: icon-only arrows next to a date read as "back" and "forward" rather than
+        // "previous month" and "next month". They sit in the top row of the popup, so the
+        // hints open downwards.
         let month_controls = row![
-            button::icon(icon::from_name("go-previous-symbolic"))
-                .padding(8)
-                .on_press(Message::PreviousMonth),
-            button::icon(icon::from_name("go-next-symbolic"))
-                .padding(8)
-                .on_press(Message::NextMonth)
+            cosmic::widget::tooltip(
+                button::icon(icon::from_name("go-previous-symbolic"))
+                    .padding(8)
+                    .on_press(Message::PreviousMonth),
+                text::body(fl!("previous-month")),
+                cosmic::widget::tooltip::Position::Bottom,
+            ),
+            cosmic::widget::tooltip(
+                button::icon(icon::from_name("go-next-symbolic"))
+                    .padding(8)
+                    .on_press(Message::NextMonth),
+                text::body(fl!("next-month")),
+                cosmic::widget::tooltip::Position::Bottom,
+            )
         ]
         .spacing(8);
 

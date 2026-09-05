@@ -313,11 +313,22 @@ impl cosmic::Application for CosmicBluetoothApplet {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        self.core
+        // WMDE: a bare glyph on the panel, and one that changes with the adapter state, so
+        // there is nothing stable to learn. applet_tooltip draws the hint as its own wayland
+        // subsurface and picks the side from the panel anchor.
+        let button = self
+            .core
             .applet
             .icon_button(&self.icon_name)
-            .on_press_down(Message::TogglePopup)
-            .into()
+            .on_press_down(Message::TogglePopup);
+
+        Element::from(self.core.applet.applet_tooltip(
+            Element::from(button),
+            fl!("bluetooth"),
+            self.popup.is_some(),
+            Message::Surface,
+            None,
+        ))
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {

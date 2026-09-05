@@ -167,55 +167,97 @@ impl Audio {
     fn playback_buttons(&self) -> Vec<Element<'_, Message>> {
         let mut elements: Vec<Element<'_, Message>> = Vec::new();
         if self.player_status.is_some() && self.config.show_media_controls_in_top_panel {
+            // WMDE: these sit on the panel itself, next to the speaker glyph, and only
+            // appear while a player is running - so they show up unannounced. The hint is an
+            // applet_tooltip, which picks its side from the panel anchor.
             if self
                 .player_status
                 .as_ref()
                 .is_some_and(|s| s.can_go_previous)
             {
                 elements.push(
-                    self.core
-                        .applet
-                        .icon_button(GO_BACK)
-                        .on_press(Message::MprisRequest(MprisRequest::Previous))
-                        .into(),
+                    self.panel_tooltip(
+                        self.core
+                            .applet
+                            .icon_button(GO_BACK)
+                            .on_press(Message::MprisRequest(MprisRequest::Previous))
+                            .into(),
+                        fl!("previous-track"),
+                    ),
                 );
             }
             if let Some(play) = self.is_play() {
                 elements.push(
-                    self.core
-                        .applet
-                        .icon_button(if play { PLAY } else { PAUSE })
-                        .on_press(if play {
-                            Message::MprisRequest(MprisRequest::Play)
-                        } else {
-                            Message::MprisRequest(MprisRequest::Pause)
-                        })
-                        .into(),
+                    self.panel_tooltip(
+                        self.core
+                            .applet
+                            .icon_button(if play { PLAY } else { PAUSE })
+                            .on_press(if play {
+                                Message::MprisRequest(MprisRequest::Play)
+                            } else {
+                                Message::MprisRequest(MprisRequest::Pause)
+                            })
+                            .into(),
+                        if play { fl!("play") } else { fl!("pause") },
+                    ),
                 );
             }
             if self.player_status.as_ref().is_some_and(|s| s.can_go_next) {
                 elements.push(
-                    self.core
-                        .applet
-                        .icon_button(GO_NEXT)
-                        .on_press(Message::MprisRequest(MprisRequest::Next))
-                        .into(),
+                    self.panel_tooltip(
+                        self.core
+                            .applet
+                            .icon_button(GO_NEXT)
+                            .on_press(Message::MprisRequest(MprisRequest::Next))
+                            .into(),
+                        fl!("next-track"),
+                    ),
                 )
             }
         }
         elements
     }
 
+    /// WMDE: hint for a control drawn on the panel itself. `applet_tooltip` puts the label
+    /// on its own wayland subsurface and derives the side from the panel anchor, which is
+    /// what a widget sitting on a screen edge needs.
+    fn panel_tooltip<'a>(
+        &'a self,
+        content: Element<'a, Message>,
+        text: String,
+    ) -> Element<'a, Message> {
+        Element::from(self.core.applet.applet_tooltip(
+            content,
+            text,
+            self.popup.is_some(),
+            Message::Surface,
+            None,
+        ))
+    }
+
+    /// WMDE: hint for a control inside the popup, where `applet_tooltip` does not apply -
+    /// the popup is its own surface, so this is a plain `widget::tooltip` and the caller
+    /// picks the side from where the control sits in the popup.
+    fn popup_tooltip<'a>(
+        content: Element<'a, Message>,
+        text: String,
+        position: cosmic::widget::tooltip::Position,
+    ) -> Element<'a, Message> {
+        cosmic::widget::tooltip(content, cosmic::widget::text::body(text), position).into()
+    }
+
     fn go_previous(&self, icon_size: u16) -> Option<Element<'_, Message>> {
         self.player_status.as_ref().and_then(|s| {
             if s.can_go_previous {
-                Some(
+                Some(Self::popup_tooltip(
                     button::icon(icon::from_name(GO_BACK).size(icon_size).symbolic(true))
                         .extra_small()
                         .class(cosmic::theme::Button::AppletIcon)
                         .on_press(Message::MprisRequest(MprisRequest::Previous))
                         .into(),
-                )
+                    fl!("previous-track"),
+                    cosmic::widget::tooltip::Position::Top,
+                ))
             } else {
                 None
             }
@@ -225,13 +267,15 @@ impl Audio {
     fn go_next(&self, icon_size: u16) -> Option<Element<'_, Message>> {
         self.player_status.as_ref().and_then(|s| {
             if s.can_go_next {
-                Some(
+                Some(Self::popup_tooltip(
                     button::icon(icon::from_name(GO_NEXT).size(icon_size).symbolic(true))
                         .extra_small()
                         .class(cosmic::theme::Button::AppletIcon)
                         .on_press(Message::MprisRequest(MprisRequest::Next))
                         .into(),
-                )
+                    fl!("next-track"),
+                    cosmic::widget::tooltip::Position::Top,
+                ))
             } else {
                 None
             }
@@ -636,6 +680,10 @@ impl cosmic::Application for Audio {
             Message::SetSinkVolume(new_volume as u32)
         });
 
+        // WMDE: the speaker glyph says nothing about what it is, and it also swallows the
+        // scroll wheel to change the volume, which nothing announces either.
+        let btn = self.panel_tooltip(btn.into(), fl!("sound"));
+
         let mut has_playback_buttons = false;
         let playback_buttons = (!self.core.applet.suggested_bounds.as_ref().is_some_and(|c| {
             // if we have a configure for width and height, we're in a overflow popup
@@ -724,18 +772,31 @@ impl cosmic::Application for Audio {
             .width(Length::FillPortion(5))
             .breakpoints(self.source_breakpoints);
 
+            // WMDE: the speaker and microphone glyphs to the left of each slider are mute
+            // toggles - nothing in the row says they are clickable at all, and hitting one by
+            // accident silences the machine. Both rows sit in the upper half of the popup, so
+            // the hints open to the right, clear of the slider.
             column![
                 padded_control(
                     row![
-                        button::icon(
-                            icon::from_name(self.output_icon_name())
-                                .size(24)
-                                .symbolic(true),
-                        )
-                        .class(cosmic::theme::Button::Icon)
-                        .icon_size(24)
-                        .line_height(24)
-                        .on_press(Message::ToggleSinkMute),
+                        Self::popup_tooltip(
+                            button::icon(
+                                icon::from_name(self.output_icon_name())
+                                    .size(24)
+                                    .symbolic(true),
+                            )
+                            .class(cosmic::theme::Button::Icon)
+                            .icon_size(24)
+                            .line_height(24)
+                            .on_press(Message::ToggleSinkMute)
+                            .into(),
+                            if self.model.active_sink.mute {
+                                fl!("unmute")
+                            } else {
+                                fl!("mute")
+                            },
+                            cosmic::widget::tooltip::Position::Right,
+                        ),
                         output_slider,
                         container(text(&self.model.active_sink.volume_text).size(16))
                             .width(Length::FillPortion(1))
@@ -746,15 +807,24 @@ impl cosmic::Application for Audio {
                 ),
                 padded_control(
                     row![
-                        button::icon(
-                            icon::from_name(self.input_icon_name())
-                                .size(24)
-                                .symbolic(true),
-                        )
-                        .class(cosmic::theme::Button::Icon)
-                        .icon_size(24)
-                        .line_height(24)
-                        .on_press(Message::ToggleSourceMute),
+                        Self::popup_tooltip(
+                            button::icon(
+                                icon::from_name(self.input_icon_name())
+                                    .size(24)
+                                    .symbolic(true),
+                            )
+                            .class(cosmic::theme::Button::Icon)
+                            .icon_size(24)
+                            .line_height(24)
+                            .on_press(Message::ToggleSourceMute)
+                            .into(),
+                            if self.model.active_source.mute {
+                                fl!("unmute")
+                            } else {
+                                fl!("mute")
+                            },
+                            cosmic::widget::tooltip::Position::Right,
+                        ),
                         input_slider,
                         container(text(&self.model.active_source.volume_text).size(16))
                             .width(Length::FillPortion(1))
@@ -837,7 +907,7 @@ impl cosmic::Application for Audio {
                 control_elements.push(go_prev);
             }
             if let Some(play) = self.is_play() {
-                control_elements.push(
+                control_elements.push(Self::popup_tooltip(
                     button::icon(icon::from_name(if play { PLAY } else { PAUSE }).symbolic(true))
                         .extra_small()
                         .class(cosmic::theme::Button::AppletIcon)
@@ -847,7 +917,9 @@ impl cosmic::Application for Audio {
                             Message::MprisRequest(MprisRequest::Pause)
                         })
                         .into(),
-                );
+                    if play { fl!("play") } else { fl!("pause") },
+                    cosmic::widget::tooltip::Position::Top,
+                ));
             }
             if let Some(go_next) = self.go_next(32) {
                 control_elements.push(go_next);

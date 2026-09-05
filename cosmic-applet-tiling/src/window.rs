@@ -243,11 +243,22 @@ impl cosmic::Application for Window {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        self.core
+        // WMDE: a bare glyph on the panel, and the on/off icons differ only subtly, so
+        // nothing tells the user which state they are looking at. applet_tooltip draws the
+        // hint as its own wayland subsurface and picks the side from the panel anchor.
+        let button = self
+            .core
             .applet
             .icon_button(if self.autotiled { ON } else { OFF })
-            .on_press_down(Message::TogglePopup)
-            .into()
+            .on_press_down(Message::TogglePopup);
+
+        Element::from(self.core.applet.applet_tooltip(
+            Element::from(button),
+            fl!("tiling"),
+            self.popup.is_some(),
+            Message::Surface,
+            None,
+        ))
     }
 
     fn view_window(&self, _id: Id) -> Element<'_, Self::Message> {

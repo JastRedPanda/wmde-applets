@@ -4,3 +4,6 @@ invert-colors = Invert colors
 settings = Accessibility settings...
 filter-colors = Filter colors
 high-contrast = High contrast
+
+# Panel button tooltip
+accessibility = Accessibility

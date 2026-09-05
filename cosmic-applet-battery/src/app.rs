@@ -99,6 +99,23 @@ struct CosmicBatteryApplet {
 }
 
 impl CosmicBatteryApplet {
+    /// WMDE: hint for the panel button. `applet_tooltip` puts the label on its own wayland
+    /// subsurface and derives the side from the panel anchor, which is what a widget sitting
+    /// on a screen edge needs; `has_popup` suppresses the hint while the popup is open.
+    fn panel_tooltip<'a>(
+        &'a self,
+        content: Element<'a, Message>,
+        text: String,
+    ) -> Element<'a, Message> {
+        Element::from(self.core.applet.applet_tooltip(
+            content,
+            text,
+            self.popup.is_some(),
+            Message::Surface,
+            None,
+        ))
+    }
+
     fn update_battery(&mut self, mut percent: f64, on_battery: bool) {
         percent = percent.clamp(0.0, 100.0);
         self.on_battery = on_battery;
@@ -635,6 +652,11 @@ impl cosmic::Application for CosmicBatteryApplet {
             ]
             .into()
         };
+
+        // WMDE: with `show_percentage` off - and on a machine with no battery at all - the
+        // panel button is a bare glyph, and even with the number on, a percentage does not
+        // say what the applet is. applet_tooltip picks the side from the panel anchor.
+        let content = self.panel_tooltip(content, fl!("battery"));
 
         self.core.applet.autosize_window(content).into()
     }

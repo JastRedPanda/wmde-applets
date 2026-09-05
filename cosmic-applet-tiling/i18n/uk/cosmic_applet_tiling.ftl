@@ -18,3 +18,6 @@ tiled = Укладання
 floating = Плавуча
 autotile-behavior = Укладання вікон на робочих просторах
 new-workspace = Поведінка нового робочого простору
+
+# Panel button tooltip
+tiling = Укладання вікон

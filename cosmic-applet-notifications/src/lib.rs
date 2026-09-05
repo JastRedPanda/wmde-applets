@@ -392,11 +392,22 @@ impl cosmic::Application for Notifications {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        self.core
+        // WMDE: a bare glyph on the panel whose icon also encodes do-not-disturb.
+        // applet_tooltip draws the hint as its own wayland subsurface and picks the side
+        // from the panel anchor.
+        let button = self
+            .core
             .applet
             .icon_button(&self.icon_name)
-            .on_press_down(Message::TogglePopup)
-            .into()
+            .on_press_down(Message::TogglePopup);
+
+        Element::from(self.core.applet.applet_tooltip(
+            Element::from(button),
+            fl!("notifications"),
+            self.popup.is_some(),
+            Message::Surface,
+            None,
+        ))
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
@@ -453,13 +464,21 @@ impl cosmic::Application for Notifications {
 
                         let duration_since = text::caption(duration_ago_msg(n));
 
-                        let close_notif = button::custom(
-                            icon::from_name("window-close-symbolic")
-                                .size(16)
-                                .symbolic(true),
-                        )
-                        .on_press(Message::Dismissed(n.id))
-                        .class(cosmic::theme::Button::Text);
+                        // WMDE: the cross does not close a window, it discards one
+                        // notification - and its neighbours (Clear group, Clear all) are
+                        // labelled text buttons, which makes the unlabelled cross the odd
+                        // one out. It sits at the top of a card, so the hint opens downwards.
+                        let close_notif = cosmic::widget::tooltip(
+                            button::custom(
+                                icon::from_name("window-close-symbolic")
+                                    .size(16)
+                                    .symbolic(true),
+                            )
+                            .on_press(Message::Dismissed(n.id))
+                            .class(cosmic::theme::Button::Text),
+                            text::body(fl!("dismiss")),
+                            cosmic::widget::tooltip::Position::Bottom,
+                        );
                         (
                             n.id,
                             Element::from(

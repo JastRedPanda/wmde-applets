@@ -4,12 +4,15 @@
 use std::{env, process};
 
 mod components;
+mod localize;
 mod subscriptions;
 
 pub mod status_notifier_watcher;
 mod unique_names;
 
 pub fn run() -> cosmic::iced::Result {
+    localize::localize();
+
     if let Some(arg) = env::args().nth(1) {
         if arg == "--status-notifier-watcher" {
             status_notifier_watcher::run()

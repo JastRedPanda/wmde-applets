@@ -17,3 +17,7 @@ clear-all = Очистити всі сповіщення
 do-not-disturb = Не турбувати
 notification-settings = Налаштування сповіщень...
 no-notifications = Немає сповіщень
+
+# Tooltips for the icon-only controls (panel button, per-notification close cross)
+notifications = Сповіщення
+dismiss = Відхилити

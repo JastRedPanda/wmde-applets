@@ -22,3 +22,6 @@ identity = Ідентичність
 vpn-connections = VPN-з'єднання
 gigabits-per-second = Гбіт/с
 terabits-per-second = Тбіт/с
+
+# Tooltip for the icon-only retry button on a failed known network
+retry = Повторити спробу

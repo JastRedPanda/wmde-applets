@@ -549,12 +549,19 @@ fn toplevel_button<'a>(
     .spacing(4)
     .padding([4, 4, 0, 4]);
     let close_button_overlay = if is_hovered {
+        // WMDE: the cross only appears on hover and the thumbnail's title sits below it, not
+        // on it, so what exactly it closes - this window, not the popup - is not obvious. It
+        // sits at the top of the thumbnail, so the hint opens downwards.
         row![
             horizontal_space(),
-            button::custom(icon::from_name("window-close-symbolic").size(16))
-                .class(Button::Destructive)
-                .on_press(Message::CloseToplevel(handle.clone()))
-                .padding(4)
+            cosmic::widget::tooltip(
+                button::custom(icon::from_name("window-close-symbolic").size(16))
+                    .class(Button::Destructive)
+                    .on_press(Message::CloseToplevel(handle.clone()))
+                    .padding(4),
+                cosmic::widget::text::body(fl!("close-window")),
+                cosmic::widget::tooltip::Position::Bottom,
+            )
         ]
     } else {
         row![]

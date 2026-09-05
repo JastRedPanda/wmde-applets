@@ -24,6 +24,7 @@ use std::collections::BTreeMap;
 
 use crate::{
     components::status_menu,
+    fl,
     subscriptions::{status_notifier_item::StatusNotifierItem, status_notifier_watcher},
 };
 
@@ -558,7 +559,7 @@ impl cosmic::Application for App {
                 } else {
                     iced::widget::row(children)
                         .push_maybe(overflow_index.map(|_| {
-                            mouse_area(
+                            let chevron = mouse_area(
                                 self.core
                                     .applet
                                     .icon_button(match self.core.applet.anchor {
@@ -569,7 +570,19 @@ impl cosmic::Application for App {
                                     })
                                     .on_press_down(Msg::ToggleOverflow),
                             )
-                            .on_enter(Msg::HoveredOverflow)
+                            .on_enter(Msg::HoveredOverflow);
+
+                            // WMDE: an icon-only chevron on the panel, and the glyph itself
+                            // only says which way the overflow opens. applet_tooltip draws
+                            // the hint as its own wayland subsurface and picks the side from
+                            // the panel anchor.
+                            Element::from(self.core.applet.applet_tooltip(
+                                Element::from(chevron),
+                                fl!("show-hidden-icons"),
+                                self.overflow_popup.is_some(),
+                                Msg::Surface,
+                                None,
+                            ))
                         }))
                         .into()
                 },

@@ -15,3 +15,7 @@ clear-all = Clear all notifications
 do-not-disturb = Do Not Disturb
 notification-settings = Notification settings...
 no-notifications = No notifications
+
+# Tooltips for the icon-only controls (panel button, per-notification close cross)
+notifications = Notifications
+dismiss = Dismiss

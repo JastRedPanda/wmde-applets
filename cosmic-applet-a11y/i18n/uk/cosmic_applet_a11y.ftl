@@ -4,3 +4,6 @@ invert-colors = Інверсія кольорів
 settings = Налаштування доступності...
 filter-colors = Фільтрувати кольори
 high-contrast = Висока контрастність
+
+# Panel button tooltip
+accessibility = Доступність

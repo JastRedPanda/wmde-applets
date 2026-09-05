@@ -18,3 +18,6 @@ tiled = Tiled
 floating = Floating
 autotile-behavior = Tile windows on workspaces
 new-workspace = New workspace behavior
+
+# Panel button tooltip
+tiling = Window tiling

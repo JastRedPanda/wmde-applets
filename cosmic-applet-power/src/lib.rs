@@ -211,11 +211,23 @@ impl cosmic::Application for Power {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        self.core
+        // WMDE: the panel button is a bare glyph. applet_tooltip draws the hint as its own
+        // wayland subsurface and picks the side from the panel anchor, which is what a
+        // control sitting on a screen edge needs; `has_popup` suppresses it while the
+        // popup is open so the two do not fight over the same spot.
+        let button = self
+            .core
             .applet
             .icon_button(&self.icon_name)
-            .on_press_down(Message::TogglePopup)
-            .into()
+            .on_press_down(Message::TogglePopup);
+
+        Element::from(self.core.applet.applet_tooltip(
+            Element::from(button),
+            fl!("power"),
+            self.popup.is_some(),
+            Message::Surface,
+            None,
+        ))
     }
 
     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
@@ -254,18 +266,24 @@ impl cosmic::Application for Power {
                 .on_press(Message::Action(PowerAction::LogOut)),
             ];
 
+            // WMDE: three unlabelled 76 px glyphs in a row, while every other entry of this
+            // popup is labelled text - and mistaking restart for shutdown costs the user the
+            // session. The row is the popup's bottom edge, so the hints open upwards.
             let power = row![
                 power_buttons(
                     "system-suspend-symbolic",
-                    Message::Action(PowerAction::Suspend)
+                    Message::Action(PowerAction::Suspend),
+                    fl!("suspend"),
                 ),
                 power_buttons(
                     "system-reboot-symbolic",
-                    Message::Action(PowerAction::Restart)
+                    Message::Action(PowerAction::Restart),
+                    fl!("restart"),
                 ),
                 power_buttons(
                     "system-shutdown-symbolic",
-                    Message::Action(PowerAction::Shutdown)
+                    Message::Action(PowerAction::Shutdown),
+                    fl!("shutdown"),
                 )
             ]
             .spacing(space_m)
@@ -297,8 +315,8 @@ impl cosmic::Application for Power {
     }
 }
 
-fn power_buttons(name: &str, on_press: Message) -> button::Button<'_, Message> {
-    button::custom(
+fn power_buttons(name: &str, on_press: Message, tooltip: String) -> Element<'_, Message> {
+    let button = button::custom(
         widget::container(text_icon(name, 40))
             .width(Length::Fill)
             .center(Length::Fill),
@@ -306,7 +324,14 @@ fn power_buttons(name: &str, on_press: Message) -> button::Button<'_, Message> {
     .on_press(on_press)
     .width(Length::Fill)
     .height(Length::Fixed(76.0))
-    .class(theme::Button::Text)
+    .class(theme::Button::Text);
+
+    cosmic::widget::tooltip(
+        button,
+        cosmic::widget::text::body(tooltip),
+        cosmic::widget::tooltip::Position::Top,
+    )
+    .into()
 }
 
 fn text_icon(name: &str, size: u16) -> cosmic::widget::Icon {

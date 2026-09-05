@@ -1614,11 +1614,21 @@ impl cosmic::Application for CosmicNetworkApplet {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        self.core
+        // WMDE: a bare glyph on the panel. applet_tooltip draws the hint as its own wayland
+        // subsurface and picks the side from the panel anchor.
+        let button = self
+            .core
             .applet
             .icon_button(&self.icon_name)
-            .on_press_down(Message::TogglePopup)
-            .into()
+            .on_press_down(Message::TogglePopup);
+
+        Element::from(self.core.applet.applet_tooltip(
+            Element::from(button),
+            fl!("network"),
+            self.popup.is_some(),
+            Message::Surface,
+            None,
+        ))
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
@@ -1781,15 +1791,24 @@ impl cosmic::Application for CosmicNetworkApplet {
                         _ => {}
                     }
                     if self.failed_known_ssids.contains(name.as_str()) {
+                        // WMDE: a refresh glyph inside a Wi-Fi row reads as "rescan", not
+                        // "forget the failure and try this network again". It sits at the
+                        // right edge of the row, so the hint opens to the left.
                         btn_content.push(
-                            cosmic::widget::button::icon(
-                                from_name("view-refresh-symbolic").size(16),
+                            cosmic::widget::tooltip(
+                                cosmic::widget::button::icon(
+                                    from_name("view-refresh-symbolic").size(16),
+                                )
+                                .icon_size(16)
+                                .on_press(
+                                    Message::ResetFailedKnownSsid(
+                                        name.clone(),
+                                        HwAddress::from_str(hw_address).unwrap_or_default(),
+                                    ),
+                                ),
+                                cosmic::widget::text::body(fl!("retry")),
+                                cosmic::widget::tooltip::Position::Left,
                             )
-                            .icon_size(16)
-                            .on_press(Message::ResetFailedKnownSsid(
-                                name.clone(),
-                                HwAddress::from_str(hw_address).unwrap_or_default(),
-                            ))
                             .into(),
                         );
                     }
@@ -2001,14 +2020,19 @@ impl cosmic::Application for CosmicNetworkApplet {
             }
 
             if self.failed_known_ssids.contains(known.ssid.as_ref()) {
+                // WMDE: second call site of the same icon-only retry button - see above.
                 btn_content.push(
-                    cosmic::widget::button::icon(from_name("view-refresh-symbolic").size(16))
-                        .icon_size(16)
-                        .on_press(Message::ResetFailedKnownSsid(
-                            known.ssid.to_string(),
-                            known.hw_address.clone(),
-                        ))
-                        .into(),
+                    cosmic::widget::tooltip(
+                        cosmic::widget::button::icon(from_name("view-refresh-symbolic").size(16))
+                            .icon_size(16)
+                            .on_press(Message::ResetFailedKnownSsid(
+                                known.ssid.to_string(),
+                                known.hw_address.clone(),
+                            )),
+                        cosmic::widget::text::body(fl!("retry")),
+                        cosmic::widget::tooltip::Position::Left,
+                    )
+                    .into(),
                 );
             }
 
