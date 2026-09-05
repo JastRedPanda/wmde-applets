@@ -3,6 +3,7 @@
 
 use crate::{
     fl,
+    launcher_entry::{LauncherEntryUpdate, launcher_entry_subscription},
     wayland_subscription::{
         OutputUpdate, ToplevelRequest, ToplevelUpdate, WaylandImage, WaylandRequest, WaylandUpdate,
         wayland_subscription,
@@ -189,6 +190,7 @@ impl DockItem {
         dot_border_radius: [f32; 4],
         window_id: window::Id,
         filter: Option<&dyn Fn(&ToplevelInfo) -> bool>,
+        progress: Option<f32>,
     ) -> Element<'_, Message> {
         let Self {
             toplevels,
@@ -264,6 +266,7 @@ impl DockItem {
                 cosmic_icon.clone().into(),
             ])
             .align_y(Alignment::Center)
+            .padding(app_icon.padding)
             .into(),
             PanelAnchor::Right => row([
                 cosmic_icon.clone().into(),
@@ -271,6 +274,7 @@ impl DockItem {
                 indicator.into(),
             ])
             .align_y(Alignment::Center)
+            .padding(app_icon.padding)
             .into(),
             PanelAnchor::Top => column([
                 indicator.into(),
@@ -278,6 +282,7 @@ impl DockItem {
                 cosmic_icon.clone().into(),
             ])
             .align_x(Alignment::Center)
+            .padding(app_icon.padding)
             .into(),
             PanelAnchor::Bottom => column([
                 cosmic_icon.clone().into(),
@@ -285,11 +290,23 @@ impl DockItem {
                 indicator.into(),
             ])
             .align_x(Alignment::Center)
+            .padding(app_icon.padding)
             .into(),
         };
 
-        let icon_button = button::custom(icon_wrapper)
-            .padding(app_icon.padding)
+        // WMDE: the Unity progress fill lies under the icon and the running indicator and has
+        // to cover the whole button, padding included - that is why the padding moved from the
+        // button on to `icon_wrapper` above. `push_under` is the only correct order:
+        // `stack![fill, icon_wrapper]` would make the fill the base layer, and its `Fill`
+        // width would then size the button, which lives in an `autosize_window` and would ask
+        // the panel to re-lay itself out on every tick.
+        let content: Element<_> = match progress.map(progress_layer) {
+            Some(fill) => stack![icon_wrapper].push_under(fill).into(),
+            None => icon_wrapper,
+        };
+
+        let icon_button = button::custom(content)
+            .padding(Padding::ZERO)
             .selected(is_focused)
             .class(app_list_icon_style(is_focused));
 
@@ -384,6 +401,10 @@ struct CosmicAppList {
     hovered_toplevel: Option<ExtForeignToplevelHandleV1>,
     overflow_favorites_popup: Option<window::Id>,
     overflow_active_popup: Option<window::Id>,
+    /// WMDE: progress reported over `com.canonical.Unity.LauncherEntry`, keyed by normalized
+    /// desktop id. Normally empty; a whole snapshot arrives at once, so this is only ever
+    /// assigned.
+    launcher_progress: FxHashMap<String, f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -425,6 +446,7 @@ enum Message {
     ConfigUpdated(AppListConfig),
     OpenFavorites,
     OpenActive,
+    LauncherEntry(LauncherEntryUpdate),
     Surface(surface::Action),
 }
 
@@ -631,6 +653,97 @@ fn app_list_icon_style(selected: bool) -> cosmic::theme::Button {
     }
 }
 
+/// Alpha of the Unity progress fill. The theme carries no entry for a wash that lies under
+/// content - every accent surface in it is opaque - so the value stays a constant of this
+/// component and is written down in `.doc/lists/02-appearance.md` and
+/// `.doc/appearance/03-color.md`. It equals the alpha of the pressed row (`#..80`): at the
+/// hover step (0.2) the band sits four units of lightness away from the panel and does not
+/// read at panel size S.
+const PROGRESS_FILL_ALPHA: f32 = 0.5;
+
+/// Whole percents: `launcher_entry` quantizes to 1/100 and `FillPortion` takes a `u16`.
+const PROGRESS_STEPS: u16 = 100;
+
+/// Width of the fill when the sender asked for the bar at 0 %. One pixel disappears into the
+/// snapped edge of the button; two read at panel size S.
+const PROGRESS_MIN_WIDTH: f32 = 2.0;
+
+/// Portion of the button covered by the fill, in whole percents.
+fn fill_steps(progress: f32) -> u16 {
+    // A NaN survives `clamp`, but the cast to u16 saturates it to 0, which is the safe end.
+    (progress.clamp(0.0, 1.0) * f32::from(PROGRESS_STEPS)).round() as u16
+}
+
+/// The fill that turns the button itself into a progress bar.
+///
+/// Grows left to right at every panel anchor. The button is square and has no long side to
+/// follow; progress reads left to right everywhere else in the stack, the footer of wmde-files
+/// included; and a fill that changed axis when the panel is moved would make one and the same
+/// operation look like a different thing.
+///
+/// 0 % is still drawn. A sender publishes `progress-visible` the moment it starts, precisely
+/// so the button reports the operation right away, and an unpacking that counts archive
+/// entries can sit below half a percent for tens of seconds - the very stretch in which the
+/// button is the only feedback left once the window is closed.
+fn progress_layer<'a>(progress: f32) -> Element<'a, Message> {
+    let filled = fill_steps(progress);
+
+    let bar = container(vertical_space().height(Length::Fill))
+        .height(Length::Fill)
+        .class(theme::Container::custom(|theme| {
+            let mut color: iced::Color = theme.cosmic().accent_color().into();
+            color.a = PROGRESS_FILL_ALPHA;
+            container::Style {
+                background: Some(Background::Color(color)),
+                // Square: `radius_xl` is 0, and buttons and selections in this stack have no
+                // rounding.
+                border: Border::default(),
+                // WMDE: unsnapped, the growing edge lands on a fractional column and the last
+                // pixel is drawn at partial alpha, so the bar shivers as it grows and its
+                // right edge never lines up with the neighbouring icon.
+                snap: true,
+                ..Default::default()
+            }
+        }));
+
+    if filled >= PROGRESS_STEPS {
+        return bar.width(Length::Fill).into();
+    }
+
+    // `Length::FillPortion(0)` must never reach the layout: a zero fill factor puts the child
+    // into the first pass of `layout::flex::resolve`, where a `Fill` width resolves against
+    // the whole available space - a 0 % bar would be drawn at 100 %. A fixed width never
+    // enters that pass, which is what the empty end of the row uses it for.
+    let (bar, rest) = if filled == 0 {
+        (
+            bar.width(Length::Fixed(PROGRESS_MIN_WIDTH)),
+            horizontal_space().width(Length::Fill),
+        )
+    } else {
+        (
+            bar.width(Length::FillPortion(filled)),
+            horizontal_space().width(Length::FillPortion(PROGRESS_STEPS - filled)),
+        )
+    };
+
+    row([bar.into(), rest.into()])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+/// Whether a desktop id reported over the bus names this dock item.
+///
+/// `DesktopEntry::id()` is an estimation, which is why `original_app_id` is kept, so both are
+/// tried. Comparison is ASCII case insensitive - the same way `fde` matches ids.
+fn id_matches(key: &str, desktop_id: &str, app_id: &str) -> bool {
+    if key.is_empty() {
+        return false;
+    }
+    let key = Ascii::new(key);
+    key == Ascii::new(desktop_id) || key == Ascii::new(app_id)
+}
+
 #[inline]
 pub fn menu_control_padding() -> Padding {
     let spacing = theme::spacing();
@@ -686,6 +799,26 @@ impl CosmicAppList {
                 on_active_output && on_active_workspace
             }
         }
+    }
+
+    /// WMDE: progress to paint on this item's button, if any sender reported it.
+    ///
+    /// The map is empty whenever nothing is running, and the early return keeps that free.
+    ///
+    /// Several keys can name one item - `DesktopEntry::id()` and `original_app_id` are two
+    /// different strings, and either may match - so the maximum is taken rather than the first
+    /// hit: with `find` the bar would jump between the two as the hash map reordered itself.
+    fn progress_for(&self, item: &DockItem) -> Option<f32> {
+        if self.launcher_progress.is_empty() {
+            return None;
+        }
+        let desktop_id = item.desktop_info.id();
+        let app_id = item.original_app_id.as_str();
+        self.launcher_progress
+            .iter()
+            .filter(|(key, _)| id_matches(key, desktop_id, app_id))
+            .map(|(_, progress)| *progress)
+            .max_by(f32::total_cmp)
     }
 
     // Update pinned items using the cached desktop entries as a source.
@@ -1752,6 +1885,9 @@ impl cosmic::Application for CosmicAppList {
                     return self.close_popups();
                 }
             }
+            Message::LauncherEntry(update) => {
+                self.launcher_progress = update.0;
+            }
             Message::Surface(a) => {
                 return cosmic::task::message(cosmic::Action::Cosmic(
                     cosmic::app::Action::Surface(a),
@@ -1817,6 +1953,7 @@ impl cosmic::Application for CosmicAppList {
                             dot_radius,
                             self.core.main_window_id().unwrap(),
                             Some(&|info| self.is_on_current_monitor_and_workspace(info)),
+                            self.progress_for(dock_item),
                         ),
                         dock_item
                             .desktop_info
@@ -1877,6 +2014,8 @@ impl cosmic::Application for CosmicAppList {
                     dot_radius,
                     self.core.main_window_id().unwrap(),
                     Some(&|info| self.is_on_current_monitor_and_workspace(info)),
+                    // The drag preview is a placeholder for the item being moved.
+                    None,
                 ),
             );
         } else if self.is_listening_for_dnd && self.pinned_list.is_empty() {
@@ -1930,6 +2069,7 @@ impl cosmic::Application for CosmicAppList {
                                 dot_radius,
                                 self.core.main_window_id().unwrap(),
                                 Some(&|info| self.is_on_current_monitor_and_workspace(info)),
+                                self.progress_for(dock_item),
                             ),
                             dock_item
                                 .desktop_info
@@ -2333,6 +2473,7 @@ impl cosmic::Application for CosmicAppList {
                                 dot_radius,
                                 id,
                                 Some(&|info| self.is_on_current_monitor_and_workspace(info)),
+                                self.progress_for(dock_item),
                             ),
                             dock_item
                                 .desktop_info
@@ -2441,6 +2582,7 @@ impl cosmic::Application for CosmicAppList {
                                 dot_radius,
                                 id,
                                 Some(&|info| self.is_on_current_monitor_and_workspace(info)),
+                                self.progress_for(dock_item),
                             ),
                             dock_item
                                 .desktop_info
@@ -2520,6 +2662,7 @@ impl cosmic::Application for CosmicAppList {
                 }
                 Message::ConfigUpdated(u.config)
             }),
+            launcher_entry_subscription().map(Message::LauncherEntry),
         ])
     }
 
@@ -2588,5 +2731,47 @@ impl AsMimeTypes for DndPathBuf {
 
     fn as_bytes(&self, _mime_type: &str) -> Option<std::borrow::Cow<'static, [u8]>> {
         Some(Cow::Owned(self.0.to_str()?.as_bytes().to_vec()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fill_steps, id_matches};
+
+    #[test]
+    fn fill_is_whole_percents_of_the_button() {
+        assert_eq!(fill_steps(0.0), 0);
+        assert_eq!(fill_steps(0.004), 0);
+        assert_eq!(fill_steps(0.005), 1);
+        assert_eq!(fill_steps(0.5), 50);
+        assert_eq!(fill_steps(0.999), 100);
+        assert_eq!(fill_steps(1.0), 100);
+        assert_eq!(fill_steps(2.0), 100);
+        assert_eq!(fill_steps(-1.0), 0);
+        assert_eq!(fill_steps(f32::NAN), 0);
+    }
+
+    #[test]
+    fn a_reported_id_finds_its_button() {
+        assert!(id_matches(
+            "fun.wmde.files",
+            "fun.wmde.files",
+            "fun.wmde.files"
+        ));
+        // fde matches ids case insensitively, and so does a sender that spelled its own
+        // desktop file the way the file system did.
+        assert!(id_matches(
+            "FUN.WMDE.Files",
+            "fun.wmde.files",
+            "fun.wmde.files"
+        ));
+        // `DesktopEntry::id()` is an estimation, so the original app id has to be tried too.
+        assert!(id_matches("org.kde.dolphin", "dolphin", "org.kde.dolphin"));
+        assert!(!id_matches(
+            "fun.wmde.file",
+            "fun.wmde.files",
+            "fun.wmde.files"
+        ));
+        assert!(!id_matches("", "fun.wmde.files", "fun.wmde.files"));
     }
 }
