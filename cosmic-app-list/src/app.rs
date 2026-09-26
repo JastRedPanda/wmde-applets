@@ -45,7 +45,7 @@ use cosmic::{
     surface::{self, action::LiveSettings},
     theme::{self, Button, Container},
     widget::{
-        DndDestination, Image, button, container, divider, dnd_source,
+        DndDestination, Image, button, container, dnd_source,
         icon::{self, from_name},
         image::Handle,
         menu,
@@ -2259,11 +2259,10 @@ impl cosmic::Application for CosmicAppList {
                     fn menu_button<'a, Message: Clone + 'a>(
                         content: impl Into<Element<'a, Message>>,
                     ) -> cosmic::widget::Button<'a, Message> {
-                        button::custom(content)
-                            .height(20 + 2 * theme::spacing().space_xxs)
-                            .class(Button::MenuItem)
-                            .padding(menu_control_padding())
-                            .width(Length::Fill)
+                        cosmic::applet::menu_item(
+                            row![menu::icon_column(None), content.into()]
+                                .align_y(Alignment::Center),
+                        )
                     }
 
                     let mut content =
@@ -2317,7 +2316,7 @@ impl cosmic::Application for CosmicAppList {
                                 Message::Exec(exec.into(), None, desktop_info.terminal()),
                             ));
                         }
-                        content = content.push(divider::horizontal::light());
+                        content = content.push(menu::divider());
                     }
 
                     if !toplevels.is_empty() {
@@ -2332,7 +2331,7 @@ impl cosmic::Application for CosmicAppList {
                             );
                         }
                         content = content.push(list_col);
-                        content = content.push(divider::horizontal::light());
+                        content = content.push(menu::divider());
                     }
 
                     let svg_accent = Rc::new(|theme: &cosmic::Theme| {
@@ -2340,18 +2339,17 @@ impl cosmic::Application for CosmicAppList {
                         svg::Style { color: Some(color) }
                     });
                     content = content.push(
-                        menu_button(
-                            if is_pinned {
-                                row![
-                                    icon::icon(from_name("checkbox-checked-symbolic").into())
-                                        .size(16)
-                                        .class(cosmic::theme::Svg::Custom(svg_accent.clone())),
-                                    text::body(fl!("pin"))
-                                ]
-                            } else {
-                                row![text::body(fl!("pin"))]
-                            }
-                            .spacing(8),
+                        cosmic::applet::menu_item(
+                            row![
+                                menu::icon_column(is_pinned.then(|| {
+                                    icon::icon(from_name("object-select-symbolic").into())
+                                        .size(menu::ICON_SIZE)
+                                        .class(cosmic::theme::Svg::Custom(svg_accent.clone()))
+                                        .into()
+                                })),
+                                text::body(fl!("pin"))
+                            ]
+                            .align_y(Alignment::Center),
                         )
                         .on_press(if is_pinned {
                             Message::UnpinApp(*id)
@@ -2361,7 +2359,7 @@ impl cosmic::Application for CosmicAppList {
                     );
 
                     if !toplevels.is_empty() {
-                        content = content.push(divider::horizontal::light());
+                        content = content.push(menu::divider());
                         content = match toplevels.len() {
                             1 => content.push(
                                 menu_button(text::body(fl!("quit")))
@@ -2375,9 +2373,8 @@ impl cosmic::Application for CosmicAppList {
                     }
                     self.core
                         .applet
-                        .popup_container(
+                        .menu_popup_container(
                             container(content)
-                                .padding(1)
                                 .height(Length::Shrink)
                                 .width(Length::Fill),
                         )

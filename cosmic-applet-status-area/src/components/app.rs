@@ -597,18 +597,13 @@ impl cosmic::Application for App {
             return self.view_overflow_popup();
         }
 
-        let theme = self.core.system_theme();
-        let cosmic = theme.cosmic();
-        let corners = cosmic.corner_radii;
-        let pad = corners.radius_m[0];
         match self.open_menu {
             Some(id) => match self.menus.get(&id) {
                 Some(menu) => self
                     .core
                     .applet
-                    .popup_container(
-                        container(menu.popup_view().map(move |msg| Msg::StatusMenu((id, msg))))
-                            .padding([pad, 0.]),
+                    .menu_popup_container(
+                        menu.popup_view().map(move |msg| Msg::StatusMenu((id, msg))),
                     )
                     .into(),
                 None => unreachable!(),
