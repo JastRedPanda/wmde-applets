@@ -101,7 +101,7 @@ pub enum Message {
     CompConfig(Box<CosmicCompConfig>),
     SetActiveLayout(usize),
     KeyboardSettings,
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
     Rectangle(RectangleUpdate<u32>),
     WaylandConnection(Backend),
     Wayland(wayland::Event),
@@ -193,9 +193,7 @@ impl cosmic::Application for Window {
                 }
             }
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
             Message::Rectangle(u) => match u {
                 RectangleUpdate::Rectangle(r) => {

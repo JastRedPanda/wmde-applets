@@ -89,7 +89,7 @@ enum Message {
     WorkspacePressed(ExtWorkspaceHandleV1),
     WheelScrolled(ScrollDelta),
     WorkspaceOverview,
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
 }
 
 impl cosmic::Application for IcedWorkspacesApplet {
@@ -166,9 +166,7 @@ impl cosmic::Application for IcedWorkspacesApplet {
                 let _ = ShellCommand::new("cosmic-workspaces").spawn();
             }
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
         Task::none()

@@ -126,7 +126,7 @@ enum Message {
     Closed(window::Id),
     OpenOverflowPopup,
     CloseOverflowPopup,
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
 }
 
 impl cosmic::Application for Minimize {
@@ -294,9 +294,7 @@ impl cosmic::Application for Minimize {
             }
             Message::CloseOverflowPopup => todo!(),
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
         Task::none()

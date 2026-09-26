@@ -149,7 +149,7 @@ pub enum Message {
     SetSinkVolume(u32),
     SetSourceVolume(u32),
     Subscription(audio_client::Event),
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
     ToggleMediaControlsInTopPanel(bool),
     TogglePopup,
     ToggleSinkMute,
@@ -586,9 +586,7 @@ impl cosmic::Application for Audio {
                 }
             },
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
             Message::Client(client) => {
                 if let Some(client) = Arc::into_inner(client) {

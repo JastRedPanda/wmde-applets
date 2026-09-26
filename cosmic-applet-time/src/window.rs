@@ -106,7 +106,7 @@ pub enum Message {
     Token(TokenUpdate),
     ConfigChanged(TimeAppletConfig),
     TimezoneUpdate(String),
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
 }
 
 impl Window {
@@ -692,9 +692,7 @@ impl cosmic::Application for Window {
                 self.update(Message::Tick)
             }
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
     }

@@ -64,7 +64,7 @@ enum Message {
     OpenSettings,
     DBusUpdate(accessibility::Response),
     WaylandUpdate(WaylandUpdate),
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
 }
 
 impl cosmic::Application for CosmicA11yApplet {
@@ -288,9 +288,7 @@ impl cosmic::Application for CosmicA11yApplet {
                 }
             },
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
         Task::none()

@@ -1028,7 +1028,7 @@ pub(crate) enum Message {
     FocusSecureInput,
     NoOp,
     #[allow(dead_code)] // required by `cosmic::applet` surface path; not always emitted
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
     ActivateVpn(Arc<str>),   // UUID of VPN to activate
     DeactivateVpn(Arc<str>), // UUID of VPN to deactivate
     VpnOperationFinished {
@@ -1294,9 +1294,7 @@ impl cosmic::Application for CosmicNetworkApplet {
                 return Task::batch(vec![forget_task, reconnect_task]);
             }
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
             Message::ActivateVpn(uuid) => {
                 self.nm_state.pending_vpn = Some(PendingVpn {

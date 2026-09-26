@@ -55,7 +55,7 @@ pub enum Message {
     WorkspaceUpdate(WorkspacesUpdate),
     NewWorkspace(Entity),
     OpenSettings,
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
 }
 
 impl cosmic::Application for Window {
@@ -234,9 +234,7 @@ impl cosmic::Application for Window {
                 tokio::spawn(cosmic::process::spawn(cmd));
             }
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
         Task::none()

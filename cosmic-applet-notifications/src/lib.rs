@@ -78,7 +78,7 @@ enum Message {
     CardsToggled(String, bool),
     Token(TokenUpdate),
     OpenSettings,
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
 }
 
 impl cosmic::Application for Notifications {
@@ -382,9 +382,7 @@ impl cosmic::Application for Notifications {
                 }
             }
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
         self.update_icon();

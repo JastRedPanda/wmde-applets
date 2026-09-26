@@ -82,7 +82,7 @@ enum Message {
     Zbus(Result<(), zbus::Error>),
     Closed(window::Id),
     Token(TokenUpdate),
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
 }
 
 impl cosmic::Application for Power {
@@ -202,9 +202,7 @@ impl cosmic::Application for Power {
                 }
             },
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
         Task::none()

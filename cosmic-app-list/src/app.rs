@@ -447,7 +447,7 @@ enum Message {
     OpenFavorites,
     OpenActive,
     LauncherEntry(LauncherEntryUpdate),
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
 }
 
 fn index_in_list(
@@ -1896,9 +1896,7 @@ impl cosmic::Application for CosmicAppList {
                 self.launcher_progress = update.0;
             }
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
 

@@ -39,7 +39,7 @@ struct Button {
 enum Msg {
     Press,
     ConfigUpdated(CosmicPanelButtonConfig),
-    Surface(surface::Action),
+    Surface(surface::Action<Msg>),
 }
 
 impl Button {
@@ -141,9 +141,7 @@ impl cosmic::Application for Button {
                     .unwrap_or_default();
             }
             Msg::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
         Task::none()

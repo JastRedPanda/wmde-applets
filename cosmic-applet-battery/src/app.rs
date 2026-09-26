@@ -229,7 +229,7 @@ enum Message {
     OpenSettings,
     SettingsDaemon(settings_daemon::Event),
     ZbusConnection(zbus::Result<zbus::Connection>),
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
 }
 
 impl cosmic::Application for CosmicBatteryApplet {
@@ -542,9 +542,7 @@ impl cosmic::Application for CosmicBatteryApplet {
                 }
             },
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
         Task::none()

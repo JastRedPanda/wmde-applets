@@ -75,7 +75,7 @@ enum Message {
     Token(TokenUpdate),
     OpenSettings,
     ToggleBluetooth(bool),
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
 }
 
 impl cosmic::Application for CosmicBluetoothApplet {
@@ -303,9 +303,7 @@ impl cosmic::Application for CosmicBluetoothApplet {
                 }
             }
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
         self.update_icon();

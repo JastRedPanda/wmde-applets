@@ -39,7 +39,7 @@ pub enum Msg {
     TogglePopup(usize),
     Hovered(Option<usize>),
     WheelScrolled(ScrollDelta),
-    Surface(surface::Action),
+    Surface(surface::Action<Msg>),
     ToggleOverflow,
     HoveredOverflow,
     Token(TokenUpdate),
@@ -409,9 +409,7 @@ impl cosmic::Application for App {
                 scroll(id, menu.item.item_proxy().clone(), delta, orientation)
             }
             Msg::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
             Msg::ToggleOverflow => {
                 if let Some(popup_id) = self.overflow_popup.take() {
