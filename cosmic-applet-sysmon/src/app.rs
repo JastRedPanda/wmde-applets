@@ -98,7 +98,7 @@ enum Message {
     /// Boxed: fifteen color strings would otherwise pad every `Tick` that
     /// goes through the queue to the size of the whole config.
     ConfigChanged(Box<SysmonAppletConfig>),
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
     /// The applet was clicked. Opens the task manager, unless turned off.
     OpenTaskManager,
     /// The compositor answered with an activation token, or the subscription
@@ -377,9 +377,7 @@ impl cosmic::Application for SysmonApplet {
                 }
             }
             Message::Surface(action) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(action),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(action));
             }
             // Ask the compositor for an activation token first. Spawning
             // straight away opens the window behind whatever has focus.

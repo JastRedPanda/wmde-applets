@@ -132,7 +132,7 @@ enum Message {
     ConfigChanged(WeatherAppletConfig),
     OpenSettings,
     Token(TokenUpdate),
-    Surface(surface::Action),
+    Surface(surface::Action<Message>),
 }
 
 impl WeatherApplet {
@@ -467,9 +467,7 @@ impl cosmic::Application for WeatherApplet {
                 }
             },
             Message::Surface(a) => {
-                return cosmic::task::message(cosmic::Action::Cosmic(
-                    cosmic::app::Action::Surface(a),
-                ));
+                return cosmic::task::message(cosmic::Action::Surface(a));
             }
         }
         Task::none()
