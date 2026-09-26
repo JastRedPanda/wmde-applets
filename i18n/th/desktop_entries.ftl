@@ -1,1 +1,1 @@
-cosmic-applet-battery-keywords = COSMIC;Applet;Power;Battery;พลังงาน;แบตเตอรี่;
+cosmic-applet-battery-keywords = WMDE;Applet;Power;Battery;พลังงาน;แบตเตอรี่;
