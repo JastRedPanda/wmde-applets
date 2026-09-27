@@ -17,7 +17,7 @@ use crate::fl;
 use crate::localize::LANGUAGE_LOADER;
 use crate::weather::{self, CityMatch};
 use cosmic::{
-    Element, Task, app,
+    ApplicationExt, Element, Task, app,
     iced::{Alignment, Length, Limits},
     theme,
     widget::{Column, button, container, scrollable, text, text_input},
@@ -103,19 +103,24 @@ impl cosmic::Application for SettingsApp {
             .and_then(|c| WeatherAppletConfig::get_entry(c).ok())
             .unwrap_or_default();
 
-        (
-            Self {
-                core,
-                handler,
-                config,
-                city_query: String::new(),
-                results: Vec::new(),
-                searching: false,
-                searched: false,
-                search_failed: false,
-            },
-            Task::none(),
-        )
+        let mut app = Self {
+            core,
+            handler,
+            config,
+            city_query: String::new(),
+            results: Vec::new(),
+            searching: false,
+            searched: false,
+            search_failed: false,
+        };
+
+        // WMDE: the window title is also what the normal title bar shows.
+        let task = match app.core.main_window_id() {
+            Some(id) => app.set_window_title(fl!("settings-title"), id),
+            None => Task::none(),
+        };
+
+        (app, task)
     }
 
     fn core(&self) -> &cosmic::app::Core {
