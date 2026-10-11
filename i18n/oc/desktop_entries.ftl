@@ -43,3 +43,5 @@ cosmic-applet-bluetooth-keywords = WMDE;Applet;Bluetooth;
 cosmic-applet-input-sources-comment = Cambiar entre fonts d’entrada
 cosmic-applet-status-area-comment = Indicadors d’aplicacions que pòdon exportar de menús al panèl
 cosmic-applet-status-area-keywords = WMDE;Applet;App;Indicador;Indicator;Notificacion;Panèl;Estatut;
+cosmic-panel-workspaces-button-comment = Dobrir la vista generala dels espacis de trabalh per gerir e bascular d'espaci de trabalh
+cosmic-panel-workspaces-button-keywords = WMDE;Applet;Espaci de trabalh;Vista generala;
