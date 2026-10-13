@@ -1,0 +1,172 @@
+# Проверяет deb/rpm-упаковку: сборка, содержимое, установка в чистых контейнерах.
+#
+# Опорные платформы — Debian stable и Fedora: собранное на них встаёт везде
+# ниже по течению (Ubuntu/Mint, RHEL/openSUSE), обратное не гарантируется.
+# Поэтому .deb собираем в debian:13, .rpm — в fedora:44.
+#
+# Требуются соседние чек-ауты (path-зависимости Cargo):
+# work/wmde-applets + work/libcosmic + work/wmde-comp + work/wmde-settings-daemon
+# + work/wmde-settings + work/wmde-notifications + work/wmde-dbus-settings-bindings
+# + work/wmde-panel.
+name: deb-rpm packaging
+
+on:
+  push:
+    paths:
+      - packaging/**
+      - justfile
+      - Cargo.toml
+      - Cargo.lock
+      - cosmic-**/
+      - data/**
+      - INSTALL.deb-rpm.md
+      - .github/workflows/deb-rpm.yml
+  pull_request:
+    paths:
+      - packaging/**
+      - justfile
+      - Cargo.toml
+      - Cargo.lock
+      - cosmic-**/
+      - data/**
+      - INSTALL.deb-rpm.md
+      - .github/workflows/deb-rpm.yml
+
+defaults:
+  run:
+    working-directory: wmde-applets
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:13
+    steps:
+      - name: Checkout siblings
+        run: |
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/libcosmic.git libcosmic
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/wmde-comp.git wmde-comp
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/wmde-settings-daemon.git wmde-settings-daemon
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/wmde-settings.git wmde-settings
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/wmde-notifications.git wmde-notifications
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/wmde-dbus-settings-bindings.git wmde-dbus-settings-bindings
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/wmde-panel.git wmde-panel
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git -C libcosmic submodule update --init --depth 1
+      - uses: actions/checkout@v4
+        with:
+          path: wmde-applets
+      - name: Build deps
+        run: |
+          apt-get update
+          apt-get install -y curl git just clang lld pkgconf libwayland-dev libxkbcommon-dev \
+            libpulse-dev libpipewire-0.3-dev fonts-noto libfontconfig1-dev libfreetype6-dev \
+            libexpat1-dev libdbus-1-dev lintian
+      - name: Install nfpm and Rust
+        run: |
+          curl -sSfL https://github.com/goreleaser/nfpm/releases/download/v2.43.0/nfpm_2.43.0_amd64.deb -o /tmp/nfpm.deb
+          apt-get install -y /tmp/nfpm.deb
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Build .deb (online + vendored)
+        run: |
+          just deb
+          dpkg-deb -c target/*.deb
+          lintian --no-tag-display-limit target/*.deb || true
+          cargo clean
+          just deb-vendored
+          dpkg-deb -c target/*.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wmde-applets-deb
+          path: wmde-applets/target/*.deb
+
+  build-rpm:
+    runs-on: ubuntu-24.04
+    container:
+      image: fedora:44
+    steps:
+      - name: Checkout siblings
+        run: |
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/libcosmic.git libcosmic
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/wmde-comp.git wmde-comp
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/wmde-settings-daemon.git wmde-settings-daemon
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/wmde-settings.git wmde-settings
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/wmde-notifications.git wmde-notifications
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/wmde-dbus-settings-bindings.git wmde-dbus-settings-bindings
+          git clone --depth 1 -b wmde https://github.com/Lin-WMDE/wmde-panel.git wmde-panel
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git -C libcosmic submodule update --init --depth 1
+      - uses: actions/checkout@v4
+        with:
+          path: wmde-applets
+      - name: Build deps
+        run: |
+          dnf install -y just clang lld pkgconf-pkg-config wayland-devel libxkbcommon-devel \
+            pulseaudio-libs-devel pipewire-devel fontconfig-devel freetype-devel expat-devel \
+            dbus-devel rpmdevtools rpmlint tar gzip
+          curl -sSfL https://github.com/goreleaser/nfpm/releases/download/v2.43.0/nfpm-2.43.0-1.x86_64.rpm -o /tmp/nfpm.rpm
+          dnf install -y /tmp/nfpm.rpm
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Build .rpm (online + vendored)
+        run: |
+          just rpm
+          rpm -qpl target/*.rpm
+          rpmlint target/*.rpm || true
+          cargo clean
+          just rpm-vendored
+          rpm -qpl target/*.rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wmde-applets-rpm
+          path: wmde-applets/target/*.rpm
+
+  install-deb:
+    needs: build-deb
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        image: ["debian:13", "ubuntu:24.04"]
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wmde-applets-deb
+          path: /tmp/pkg
+      - name: Install and check
+        run: |
+          apt-get update
+          apt-get install -y /tmp/pkg/*.deb
+          dpkg -l wmde-applets
+          test -x /usr/bin/wmde-applets
+          test -L /usr/bin/wmde-app-list
+
+  install-rpm:
+    needs: build-rpm
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        image: ["fedora:44", "opensuse/tumbleweed"]
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wmde-applets-rpm
+          path: /tmp/pkg
+      - name: Install and check (dnf)
+        if: startsWith(matrix.image, 'fedora')
+        run: |
+          dnf install -y /tmp/pkg/*.rpm
+          rpm -q wmde-applets
+          test -x /usr/bin/wmde-applets
+          test -L /usr/bin/wmde-app-list
+      - name: Install and check (zypper)
+        if: startsWith(matrix.image, 'opensuse')
+        run: |
+          zypper --non-interactive install --allow-unsigned-rpm /tmp/pkg/*.rpm
+          rpm -q wmde-applets
+          test -x /usr/bin/wmde-applets
+          test -L /usr/bin/wmde-app-list

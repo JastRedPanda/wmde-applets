@@ -1,0 +1,6 @@
+# Не даём Windows-чекаутам портить файлы CRLF (ломает shell-скрипты в пакетах)
+packaging/** text eol=lf
+justfile text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+.github/** text eol=lf

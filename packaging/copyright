@@ -1,0 +1,9 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Source: https://github.com/Lin-WMDE/wmde-applets
+
+Files: *
+Copyright: 2024-2026 WMDE <https://wmde.fun>
+           2024 System76 <info@system76.com>
+License: GPL-3.0-only
+ On Debian systems the full text of the GNU General Public License
+ version 3 can be found in `/usr/share/common-licenses/GPL-3'.

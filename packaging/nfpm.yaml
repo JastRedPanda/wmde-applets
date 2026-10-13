@@ -1,0 +1,107 @@
+# Один конфиг nFPM на оба формата. Стейджинг готовит `just package-staging`,
+# версию всегда подставляет just через env WMDE_VERSION (см. justfile).
+# ВАЖНО: только ${WMDE_VERSION} без :-дефолта — nFPM раскрывает env через
+# os.ExpandEnv и :- не понимает (версия молча станет 0.0.0~rc0).
+name: wmde-applets
+arch: amd64
+version: ${WMDE_VERSION}
+release: 1
+maintainer: WMDE <wmde@wmde.fun>
+description: |-
+  WMDE panel applets (fork of cosmic-applets)
+  Multiplexer binary with per-applet launchers, desktop files and icons.
+homepage: https://wmde.fun
+license: GPL-3.0-only
+section: x11
+
+# Как в PKGBUILD: wayland-клиент + pulse/pipewire (аудио-апплет) + Noto для подписей.
+depends:
+  - libc6 | glibc
+  - libgcc-s1 | libgcc
+  - libxkbcommon0
+  - libwayland-client0
+  - libpulse0t64
+  - libpipewire-0.3-0t64
+  - fonts-noto
+
+# Мягкая зависимость из PKGBUILD optdepends: клик по системному монитору.
+suggests:
+  - wmde-taskmgr
+
+contents:
+  # bin целиком деревом: бинарь + ~18 симлинков wmde-applet-*/wmde-app-list/... (nFPM хранит симлинки)
+  - src: target/staging/usr/bin/
+    dst: /usr/bin/
+    type: tree
+  - src: target/staging/usr/share/applications/
+    dst: /usr/share/applications/
+    type: tree
+  - src: target/staging/usr/share/metainfo/fun.wmde.Applets.metainfo.xml
+    dst: /usr/share/metainfo/fun.wmde.Applets.metainfo.xml
+    file_info: { mode: 0644 }
+  - src: target/staging/usr/share/dbus-1/
+    dst: /usr/share/dbus-1/
+    type: tree
+  - src: target/staging/usr/lib/systemd/
+    dst: /usr/lib/systemd/
+    type: tree
+  - src: target/staging/usr/share/icons/
+    dst: /usr/share/icons/
+    type: tree
+  - src: target/staging/usr/share/wmde/
+    dst: /usr/share/wmde/
+    type: tree
+  # doc (copyright + changelog.Debian.gz) готовит just package-doc.
+  # Только для deb: в rpm нет %doc-разметки у nFPM,
+  # а лицензия и changelog там и так есть (License-тег + %changelog).
+  - src: target/staging/usr/share/doc/wmde-applets/
+    dst: /usr/share/doc/wmde-applets/
+    type: tree
+    packager: deb
+
+scripts:
+  postinstall: packaging/postinstall.sh
+  postremove: packaging/postremove.sh
+
+# %changelog для rpm генерит just package-staging (иначе E: no-changelogname-tag).
+# Путь от корня репо: nFPM резолвит его от cwd, а не от каталога конфига.
+changelog: target/changelog.yaml
+
+overrides:
+  deb:
+    # pulse: в trixie пакет снова libpulse0, в noble libpulse0t64 — альтернатива ест оба.
+    depends:
+      - libc6
+      - libgcc-s1
+      - libxkbcommon0
+      - libwayland-client0
+      - libpulse0t64 | libpulse0
+      - libpipewire-0.3-0t64
+      - libdbus-1-3
+      - fonts-noto
+      - libfontconfig1
+      - libfreetype6
+      - libexpat1
+    suggests:
+      - wmde-taskmgr
+  rpm:
+    # SONAME вместо имён пакетов: имена расходятся между
+    # Fedora и openSUSE, а SONAME предоставляют обе семьи.
+    # Шрифты Noto — через виртуальные font()-provides: имена пакетов
+    # расходятся (Fedora: google-noto-sans-fonts, openSUSE: свои),
+    # а provides вида font(notosans) генерят обе семьи (проверено repoquery).
+    depends:
+      - libc.so.6()(64bit)
+      - libgcc_s.so.1()(64bit)
+      - libxkbcommon.so.0()(64bit)
+      - libwayland-client.so.0()(64bit)
+      - libpulse.so.0()(64bit)
+      - libpipewire-0.3.so.0()(64bit)
+      - libdbus-1.so.3()(64bit)
+      - font(notosans)
+      - font(notosansmono)
+      - libfontconfig.so.1()(64bit)
+      - libfreetype.so.6()(64bit)
+      - libexpat.so.1()(64bit)
+    suggests:
+      - wmde-taskmgr
